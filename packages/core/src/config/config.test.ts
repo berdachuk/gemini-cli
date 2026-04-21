@@ -68,6 +68,7 @@ import {
   PREVIEW_GEMINI_MODEL_AUTO,
   PREVIEW_GEMINI_FLASH_MODEL,
 } from './models.js';
+import { WEB_SEARCH_TOOL_NAME } from '../tools/definitions/base-declarations.js';
 import { Storage } from './storage.js';
 import type { AgentLoopContext } from './agent-loop-context.js';
 
@@ -731,6 +732,36 @@ describe('Server Config (config.ts)', () => {
       await config.refreshAuth(AuthType.LOGIN_WITH_GOOGLE);
 
       expect(config.getModel()).toBe(PREVIEW_GEMINI_MODEL_AUTO);
+    });
+
+    it('should unregister WebSearchTool when refreshing auth to Ollama', async () => {
+      const config = new Config(baseParams);
+      await config.initialize();
+
+      vi.mocked(ToolRegistry.prototype.getTool).mockImplementation(
+        (name: string) =>
+          name === WEB_SEARCH_TOOL_NAME ? ({} as never) : undefined,
+      );
+
+      vi.mocked(createContentGeneratorConfig).mockResolvedValue({
+        authType: AuthType.USE_OLLAMA,
+        apiKey: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        vertexai: false,
+      } as ContentGeneratorConfig);
+
+      vi.mocked(createContentGenerator).mockResolvedValue({
+        generateContent: vi.fn(),
+        generateContentStream: vi.fn(),
+        countTokens: vi.fn(),
+        embedContent: vi.fn(),
+      } as unknown as ContentGenerator);
+
+      await config.refreshAuth(AuthType.USE_OLLAMA);
+
+      expect(ToolRegistry.prototype.unregisterTool).toHaveBeenCalledWith(
+        WEB_SEARCH_TOOL_NAME,
+      );
     });
   });
 

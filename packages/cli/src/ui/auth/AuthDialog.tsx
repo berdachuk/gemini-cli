@@ -75,6 +75,11 @@ export function AuthDialog({
       value: AuthType.USE_VERTEX_AI,
       key: AuthType.USE_VERTEX_AI,
     },
+    {
+      label: 'Use Ollama (local)',
+      value: AuthType.USE_OLLAMA,
+      key: AuthType.USE_OLLAMA,
+    },
   ];
 
   if (settings.merged.security.auth.enforcedType) {
@@ -105,6 +110,10 @@ export function AuthDialog({
 
     if (process.env['GEMINI_API_KEY']) {
       return item.value === AuthType.USE_GEMINI;
+    }
+
+    if (process.env['OLLAMA_BASE_URL']) {
+      return item.value === AuthType.USE_OLLAMA;
     }
 
     return item.value === AuthType.LOGIN_WITH_GOOGLE;

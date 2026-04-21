@@ -16,7 +16,12 @@ installation methods, and release types.
 - **Shell:** Bash, Zsh, or PowerShell
 - **Location:**
   [Gemini Code Assist supported locations](https://developers.google.com/gemini-code-assist/resources/available-locations#americas)
-- **Internet connection required**
+- **Internet connection required** for installation, updates, and Google-backed
+  features. For **fully local chat** using [Ollama](https://ollama.com/) (for
+  example Gemma 4 on your machine), see
+  [Authentication: Use Ollama (local)](./authentication.md#ollama-local); you
+  still need network access at least once to install the CLI unless you use an
+  offline mirror.
 
 ## Install Gemini CLI
 

@@ -1,8 +1,9 @@
 # Gemini CLI authentication setup
 
-To use Gemini CLI, you'll need to authenticate with Google. This guide helps you
-quickly find the best way to sign in based on your account type and how you're
-using the CLI.
+To use Gemini CLI with Google's models, you authenticate with Google or an API
+key. You can instead connect to a **local Ollama** server and keep inference on
+your machine. This guide helps you pick the right method for your account and
+environment.
 
 > **Note:** Looking for a high-level comparison of all available subscriptions?
 > To compare features and find the right quota for your needs, see our
@@ -15,13 +16,14 @@ personal Google account.
 
 Select the authentication method that matches your situation in the table below:
 
-| User Type / Scenario                                                   | Recommended Authentication Method                                | Google Cloud Project Required                               |
-| :--------------------------------------------------------------------- | :--------------------------------------------------------------- | :---------------------------------------------------------- |
-| Individual Google accounts                                             | [Sign in with Google](#login-google)                             | No, with exceptions                                         |
-| Organization users with a company, school, or Google Workspace account | [Sign in with Google](#login-google)                             | [Yes](#set-gcp)                                             |
-| AI Studio user with a Gemini API key                                   | [Use Gemini API Key](#gemini-api)                                | No                                                          |
-| Google Cloud Vertex AI user                                            | [Vertex AI](#vertex-ai)                                          | [Yes](#set-gcp)                                             |
-| [Headless mode](#headless)                                             | [Use Gemini API Key](#gemini-api) or<br> [Vertex AI](#vertex-ai) | No (for Gemini API Key)<br> [Yes](#set-gcp) (for Vertex AI) |
+| User Type / Scenario                                                   | Recommended Authentication Method                                                          | Google Cloud Project Required                                 |
+| :--------------------------------------------------------------------- | :----------------------------------------------------------------------------------------- | :------------------------------------------------------------ |
+| Individual Google accounts                                             | [Sign in with Google](#login-google)                                                       | No, with exceptions                                           |
+| Organization users with a company, school, or Google Workspace account | [Sign in with Google](#login-google)                                                       | [Yes](#set-gcp)                                               |
+| AI Studio user with a Gemini API key                                   | [Use Gemini API Key](#gemini-api)                                                          | No                                                            |
+| Google Cloud Vertex AI user                                            | [Vertex AI](#vertex-ai)                                                                    | [Yes](#set-gcp)                                               |
+| Local / air-gapped inference with [Ollama](https://ollama.com/)        | [Use Ollama (local)](#ollama-local)                                                        | No                                                            |
+| [Headless mode](#headless)                                             | [Use Gemini API Key](#gemini-api),<br> [Vertex AI](#vertex-ai), or [Ollama](#ollama-local) | No (Gemini API Key or Ollama)<br> [Yes](#set-gcp) (Vertex AI) |
 
 ### What is my Google account type?
 
@@ -272,6 +274,99 @@ pipelines, or if your organization restricts user-based ADC or API key creation.
 
 5.  Select **Vertex AI**.
 
+## Use Ollama (local models) <a id="ollama-local"></a>
+
+Use this method to run supported models (for example **Gemma 4** tags such as
+`gemma4:26b`) on your own computer via [Ollama](https://ollama.com/). Traffic
+for chat goes to your Ollama server, not to the Gemini API.
+
+### Prerequisites
+
+1. Install Ollama and start the server (default listen address
+   `http://127.0.0.1:11434`).
+2. Pull a model. Any tag from the
+   [Ollama Gemma 4 library](https://ollama.com/library/gemma4) works, for
+   example:
+
+   ```bash
+   ollama pull gemma4:latest
+   ollama pull gemma4:e2b
+   ollama pull gemma4:e4b
+   ollama pull gemma4:26b
+   ollama pull gemma4:31b
+   ollama pull gemma4:31b-cloud
+   ```
+
+### Interactive setup
+
+1. Set the base URL (host only; the CLI adds the correct API path internally):
+
+   **macOS/Linux**
+
+   ```bash
+   export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+   ```
+
+   **Windows (PowerShell)**
+
+   ```powershell
+   $env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
+   ```
+
+2. Run `gemini` and choose **Use Ollama (local)** when prompted.
+
+3. Optional: set a default model (`OLLAMA_MODEL` overrides alias resolution).
+   Examples: `gemma4:latest`, `gemma4:e4b`, `gemma4:26b`, `gemma4:31b`,
+   `gemma4:31b-cloud`. If unset, the CLI maps common aliases to Ollama tags (see
+   [Ollama guide](../../OLLAMA_GUIDE.md) “Model name mapping”).
+
+   ```bash
+   export OLLAMA_MODEL="gemma4:26b"
+   ```
+
+### If `GEMINI_API_KEY` is already set
+
+The CLI normally prefers a Gemini API key when that variable is present. To
+force Ollama anyway:
+
+```bash
+export GEMINI_CLI_AUTH=ollama
+```
+
+Alternatively, unset `GEMINI_API_KEY` for that terminal session.
+
+### Recommended: native Ollama client
+
+Set this for reliable local streaming and compatibility with Ollama’s
+OpenAI-compatible HTTP API:
+
+```bash
+export OLLAMA_USE_NATIVE=true
+```
+
+### Strict local behavior
+
+- With Ollama auth, the **Google Search** tool is not registered (it requires
+  Gemini API grounding). Other tools (for example file and shell tools) follow
+  your policy settings.
+- Set `GEMINI_CLI_OFFLINE=1` (or `true`) to skip optional npm registry update
+  checks in interactive mode.
+
+### Headless (scripts, CI)
+
+Set the same environment variables, save `security.auth.selectedType` to
+`ollama` in your [settings](../reference/configuration.md), or pass auth
+consistently with `GEMINI_CLI_AUTH=ollama`, then run for example:
+
+```bash
+gemini --prompt "Your question" --approval-mode yolo
+```
+
+### More detail
+
+See the repository’s **[Ollama guide](../../OLLAMA_GUIDE.md)** for model tags,
+`OLLAMA_USE_NATIVE`, troubleshooting, and advanced options.
+
 ## Set your Google Cloud project <a id="set-gcp"></a>
 
 > **Important:** Most individual Google accounts (free and paid) don't require a
@@ -396,6 +491,10 @@ configure authentication using environment variables:
 
 - [Use Gemini API Key](#gemini-api)
 - [Vertex AI](#vertex-ai)
+- [Use Ollama (local)](#ollama-local) — set `OLLAMA_BASE_URL` and either
+  `GEMINI_CLI_AUTH=ollama` (when `GEMINI_API_KEY` is also set) or rely on
+  `OLLAMA_BASE_URL` alone so the CLI selects Ollama; use
+  `OLLAMA_USE_NATIVE=true` for the native client
 
 ## What's next?
 
@@ -404,3 +503,6 @@ privacy notices. Review the following pages to learn more:
 
 - [Gemini CLI: Quotas and Pricing](../resources/quota-and-pricing.md).
 - [Gemini CLI: Terms of Service and Privacy Notice](../resources/tos-privacy.md).
+- **Ollama:** model licenses and local policies are separate from Gemini API
+  usage; see the **[Ollama guide](../../OLLAMA_GUIDE.md)** for local setup and
+  troubleshooting.

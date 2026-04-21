@@ -26,6 +26,7 @@ import { determineSurface } from '../utils/surface.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
 import { getVersion, resolveModel } from '../../index.js';
 import { createOllamaContentGenerator } from './ollamaContentGenerator.js';
+import { resolveOllamaModelName } from '../utils/ollamaModelMapping.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
 
 /**
@@ -65,15 +66,33 @@ export enum AuthType {
   USE_OLLAMA = 'ollama',
 }
 
+function tryParseAuthTypeFromEnvString(value: string): AuthType | undefined {
+  for (const authType of Object.values(AuthType)) {
+    if (authType === value) {
+      return authType;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Detects the best authentication type based on environment variables.
  *
  * Checks in order:
+ * 0. GEMINI_CLI_AUTH set to a valid AuthType value (e.g. ollama) — opt-in override
  * 1. GOOGLE_GENAI_USE_GCA=true -> LOGIN_WITH_GOOGLE
  * 2. GOOGLE_GENAI_USE_VERTEXAI=true -> USE_VERTEX_AI
  * 3. GEMINI_API_KEY -> USE_GEMINI
+ * 4. OLLAMA_BASE_URL -> USE_OLLAMA
  */
 export function getAuthTypeFromEnv(): AuthType | undefined {
+  const cliAuthOverride = process.env['GEMINI_CLI_AUTH']?.trim();
+  if (cliAuthOverride) {
+    const parsed = tryParseAuthTypeFromEnvString(cliAuthOverride);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
   if (process.env['GOOGLE_GENAI_USE_GCA'] === 'true') {
     return AuthType.LOGIN_WITH_GOOGLE;
   }
@@ -165,7 +184,7 @@ export async function createContentGeneratorConfig(
   if (authType === AuthType.USE_OLLAMA) {
     contentGeneratorConfig.apiKey = process.env['OLLAMA_API_KEY'] || 'ollama';
     contentGeneratorConfig.baseUrl =
-      baseUrl || process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434/v1';
+      baseUrl || process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434';
     contentGeneratorConfig.vertexai = false;
 
     return contentGeneratorConfig;
@@ -187,11 +206,13 @@ export async function createContentGenerator(
       return new LoggingContentGenerator(fakeGenerator, gcConfig);
     }
     const version = await getVersion();
+    const isGoogleAuth =
+      config.authType === AuthType.USE_GEMINI ||
+      config.authType === AuthType.USE_VERTEX_AI ||
+      ((await gcConfig.getGemini31Launched?.()) ?? false);
     const model = resolveModel(
       gcConfig.getModel(),
-      config.authType === AuthType.USE_GEMINI ||
-        config.authType === AuthType.USE_VERTEX_AI ||
-        ((await gcConfig.getGemini31Launched?.()) ?? false),
+      isGoogleAuth,
       false,
       gcConfig.getHasAccessToPreviewModel?.() ?? true,
       gcConfig,
@@ -294,10 +315,12 @@ export async function createContentGenerator(
       const ollamaBaseUrl =
         config.baseUrl ||
         process.env['OLLAMA_BASE_URL'] ||
-        'http://localhost:11434/v1';
+        'http://localhost:11434';
       const ollamaApiKey = process.env['OLLAMA_API_KEY'] || 'ollama';
       const ollamaModel =
-        process.env['OLLAMA_MODEL'] || gcConfig.getModel() || 'gemma4:26b';
+        process.env['OLLAMA_MODEL'] !== undefined
+          ? process.env['OLLAMA_MODEL']
+          : resolveOllamaModelName(gcConfig.getModel() || 'gemma4:26b');
 
       if (process.env['OLLAMA_USE_NATIVE'] === 'true') {
         const ollamaGenerator = createOllamaContentGenerator(
@@ -316,7 +339,7 @@ export async function createContentGenerator(
         baseUrl?: string;
         headers: Record<string, string>;
       } = {
-        baseUrl: ollamaBaseUrl,
+        baseUrl: `${ollamaBaseUrl}/v1`,
         headers,
       };
 

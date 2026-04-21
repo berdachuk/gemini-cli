@@ -36,11 +36,12 @@ interface OllamaChatRequest {
   };
 }
 
-interface OllamaStreamResponse {
-  model: string;
-  message?: { role: string; content: string };
-  done: boolean;
-  total_duration?: number;
+/** OpenAI-compatible streaming chunk from Ollama `/v1/chat/completions`. */
+interface OpenAIChatCompletionStreamChunk {
+  choices?: Array<{
+    delta?: { content?: string | null; role?: string | null };
+    finish_reason?: string | null;
+  }>;
 }
 
 function extractTextFromParts(parts: Part[]): string {
@@ -159,8 +160,13 @@ export class OllamaContentGenerator implements ContentGenerator {
       },
     };
 
+    const url = `${this.baseUrl}/v1/chat/completions`;
+    debugLogger.debug(
+      `Ollama generateContent URL: ${url}, model: ${this.model}`,
+    );
+
     try {
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(ollamaRequest),
@@ -180,9 +186,17 @@ export class OllamaContentGenerator implements ContentGenerator {
         throw new Error('No response from Ollama');
       }
 
+      const msg = data.choices[0].message;
+      if (!msg?.content) {
+        throw new Error('No message content from Ollama');
+      }
+
       return convertToGenerateContentResponse(
         this.model,
-        data.choices[0].message,
+        {
+          role: msg.role === 'system' ? 'system' : 'assistant',
+          content: msg.content,
+        },
         true,
       );
     } catch (error) {
@@ -217,7 +231,9 @@ export class OllamaContentGenerator implements ContentGenerator {
       },
     };
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const url = `${this.baseUrl}/v1/chat/completions`;
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(ollamaRequest),
@@ -239,6 +255,8 @@ export class OllamaContentGenerator implements ContentGenerator {
     const model = this.model;
 
     async function* generate(): AsyncGenerator<GenerateContentResponse> {
+      let sentStop = false;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -248,30 +266,57 @@ export class OllamaContentGenerator implements ContentGenerator {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
-            if (dataStr === '[DONE]') {
-              return;
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) {
+            continue;
+          }
+          const dataStr = trimmed.slice(6).trim();
+          if (dataStr === '[DONE]') {
+            if (!sentStop) {
+              sentStop = true;
+              yield convertToGenerateContentResponse(
+                model,
+                { role: 'assistant', content: '' },
+                true,
+              );
             }
-            try {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-              const data = JSON.parse(
-                dataStr,
-              ) as unknown as OllamaStreamResponse;
-              if (data.message?.content) {
-                 
-                yield convertToGenerateContentResponse(
-                  model,
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-                  data.message as unknown as OllamaMessage,
-                  data.done,
-                );
-              }
-            } catch {
-              // Skip malformed JSON
+            return;
+          }
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+            const data = JSON.parse(
+              dataStr,
+            ) as unknown as OpenAIChatCompletionStreamChunk;
+            const choice = data.choices?.[0];
+            const piece = choice?.delta?.content;
+            if (typeof piece === 'string' && piece.length > 0) {
+              yield convertToGenerateContentResponse(
+                model,
+                { role: 'assistant', content: piece },
+                false,
+              );
             }
+            const fr = choice?.finish_reason;
+            if (fr && !sentStop) {
+              sentStop = true;
+              yield convertToGenerateContentResponse(
+                model,
+                { role: 'assistant', content: '' },
+                true,
+              );
+            }
+          } catch {
+            // Skip malformed JSON
           }
         }
+      }
+
+      if (!sentStop) {
+        yield convertToGenerateContentResponse(
+          model,
+          { role: 'assistant', content: '' },
+          true,
+        );
       }
     }
 

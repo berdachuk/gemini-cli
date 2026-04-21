@@ -11,13 +11,24 @@ Gemini CLI now supports using **Ollama** as a local OpenAI-compatible API
 provider. This allows you to run AI models entirely locally without requiring
 Google authentication or an internet connection.
 
-### Supported Models
+### Supported models (Gemma 4)
 
-| Model              | Alias              | Description           |
-| ------------------ | ------------------ | --------------------- |
-| `gemma4:26b`       | `gemma4-26b`       | Gemma 4 26B (default) |
-| `gemma4:31b`       | `gemma4-31b`       | Gemma 4 31B           |
-| `gemma4:31b-cloud` | `gemma4-31b-cloud` | Gemma 4 31B (cloud)   |
+Tags match the [Ollama Gemma 4 library](https://ollama.com/library/gemma4). You
+can pass any of these to `-m` or `OLLAMA_MODEL`. Hyphen aliases (for example
+`gemma4-latest`) are accepted when the CLI resolves the model for Ollama auth.
+
+| Model              | Approx. size | Context | CLI hyphen alias                                                                                          |
+| ------------------ | ------------ | ------- | --------------------------------------------------------------------------------------------------------- |
+| `gemma4:latest`    | 9.6 GB       | 128K    | `gemma4-latest`                                                                                           |
+| `gemma4:e2b`       | 7.2 GB       | 128K    | `gemma4-e2b`                                                                                              |
+| `gemma4:e4b`       | 9.6 GB       | 128K    | `gemma4-e4b`                                                                                              |
+| `gemma4:26b`       | 18 GB        | 256K    | `gemma4-26b`                                                                                              |
+| `gemma4:31b`       | 20 GB        | 256K    | `gemma4-31b`                                                                                              |
+| `gemma4:31b-cloud` | (cloud)      | 256K    | `gemma4-31b-cloud`                                                                                        |
+| `gemma4`           | (library)    | —       | Set `OLLAMA_MODEL=gemma4` for the library meta name; the `gemma4` **settings alias** maps to `gemma4:26b` |
+
+Sizes and context lengths follow Ollama’s published cards and may change when
+the library is updated.
 
 ---
 
@@ -34,16 +45,21 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 **Windows:** Download from [ollama.com/download](https://ollama.com/download)
 
-### 2. Install Models
+### 2. Install models
 
 ```bash
-# Pull Gemma 4 26B (default model)
-ollama pull gemma4:26b
+# Default / latest tag (see https://ollama.com/library/gemma4)
+ollama pull gemma4:latest
 
-# Pull Gemma 4 31B
+# Edge (effective 2B / 4B)
+ollama pull gemma4:e2b
+ollama pull gemma4:e4b
+
+# Workstation-class
+ollama pull gemma4:26b
 ollama pull gemma4:31b
 
-# Pull Gemma 4 31B (cloud variant, optional)
+# Cloud-backed 31B (optional)
 ollama pull gemma4:31b-cloud
 
 # Verify installed models
@@ -96,11 +112,50 @@ gemini -m gemma4:31b-cloud "Hello"
 
 ### Environment Variables
 
-| Variable          | Default                     | Description                             |
-| ----------------- | --------------------------- | --------------------------------------- |
-| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint                     |
-| `OLLAMA_MODEL`    | `gemma4:26b`                | Default model to use                    |
-| `OLLAMA_API_KEY`  | `ollama`                    | API key (dummy value for compatibility) |
+| Variable             | Default                     | Description                                                                               |
+| -------------------- | --------------------------- | ----------------------------------------------------------------------------------------- |
+| `OLLAMA_BASE_URL`    | `http://localhost:11434/v1` | Ollama API endpoint                                                                       |
+| `OLLAMA_MODEL`       | `gemma4:26b`                | Default model to use                                                                      |
+| `OLLAMA_API_KEY`     | `ollama`                    | API key (dummy value for compatibility)                                                   |
+| `GEMINI_CLI_AUTH`    | _(unset)_                   | Optional override: set to `ollama` to force Ollama auth even when `GEMINI_API_KEY` is set |
+| `GEMINI_CLI_OFFLINE` | `1` or `true`               | Skip npm registry update checks (air-gapped)                                              |
+| `OLLAMA_USE_NATIVE`  | `false`                     | Use native `OllamaContentGenerator` instead of the default OpenAI-compatible client       |
+
+### Auth picker (interactive)
+
+On first launch, choose **Use Ollama (local)** in the **Get started** screen to
+save `security.auth.selectedType` to `ollama` without editing JSON.
+
+If `OLLAMA_BASE_URL` is set but no auth method is saved yet, the CLI prompts you
+to pick **Use Ollama (local)**.
+
+### Model name mapping (CLI aliases)
+
+When `OLLAMA_MODEL` is **not** set, the CLI maps Google/Gemma aliases and hyphen
+shortcuts to Ollama tags for the active model. Official library names from
+[ollama.com/library/gemma4](https://ollama.com/library/gemma4) are sent
+unchanged (for example `gemma4:e4b`, `gemma4:latest`).
+
+| Config / CLI model                       | Ollama tag sent    |
+| ---------------------------------------- | ------------------ |
+| `gemma4`, `gemma-4-26b-a4b-it`, `ollama` | `gemma4:26b`       |
+| `gemma4-31b`, `gemma-4-31b-it`           | `gemma4:31b`       |
+| `gemma4-latest`                          | `gemma4:latest`    |
+| `gemma4-e2b`                             | `gemma4:e2b`       |
+| `gemma4-e4b`                             | `gemma4:e4b`       |
+| `gemma4-26b`                             | `gemma4:26b`       |
+| `gemma4-31b-cloud`                       | `gemma4:31b-cloud` |
+
+Other names are passed through unchanged (e.g. `mistral:latest`).
+
+### Strict local behavior
+
+With Ollama auth, **Google Search** (`google_web_search`) is not registered: it
+depends on Gemini API grounding. General **web_fetch** and other local tools
+still work as configured.
+
+Interactive mode skips the **npm** “new version” check when Ollama is selected
+or when `GEMINI_CLI_OFFLINE` is set, to avoid calling the public npm registry.
 
 ### Settings File
 

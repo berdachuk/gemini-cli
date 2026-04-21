@@ -9,34 +9,43 @@
 
 ### 1.1 Concrete Models
 
-| Model                                | Tier       | Family     | Preview | Features                    |
-| ------------------------------------ | ---------- | ---------- | ------- | --------------------------- |
-| `gemini-3.1-pro-preview`             | pro        | gemini-3   | Yes     | thinking, multimodalToolUse |
-| `gemini-3.1-pro-preview-customtools` | pro        | gemini-3   | Yes     | thinking, multimodalToolUse |
-| `gemini-3-pro-preview`               | pro        | gemini-3   | Yes     | thinking, multimodalToolUse |
-| `gemini-3-flash-preview`             | flash      | gemini-3   | Yes     | multimodalToolUse           |
-| `gemini-3.1-flash-lite-preview`      | flash-lite | gemini-3   | Yes     | multimodalToolUse           |
-| `gemini-2.5-pro`                     | pro        | gemini-2.5 | No      | -                           |
-| `gemini-2.5-flash`                   | flash      | gemini-2.5 | No      | -                           |
-| `gemini-2.5-flash-lite`              | flash-lite | gemini-2.5 | No      | -                           |
-| `gemma-4-26b-a4b-it`                 | pro        | gemma-4    | No      | -                           |
-| `gemma-4-31b-it`                     | pro        | gemma-4    | No      | -                           |
-| `gemma4:26b`                         | ollama     | gemma-4    | No      | Local Ollama model          |
-| `gemma4:31b`                         | ollama     | gemma-4    | No      | Local Ollama model          |
+| Model                                | Tier       | Family     | Preview | Features                     |
+| ------------------------------------ | ---------- | ---------- | ------- | ---------------------------- |
+| `gemini-3.1-pro-preview`             | pro        | gemini-3   | Yes     | thinking, multimodalToolUse  |
+| `gemini-3.1-pro-preview-customtools` | pro        | gemini-3   | Yes     | thinking, multimodalToolUse  |
+| `gemini-3-pro-preview`               | pro        | gemini-3   | Yes     | thinking, multimodalToolUse  |
+| `gemini-3-flash-preview`             | flash      | gemini-3   | Yes     | multimodalToolUse            |
+| `gemini-3.1-flash-lite-preview`      | flash-lite | gemini-3   | Yes     | multimodalToolUse            |
+| `gemini-2.5-pro`                     | pro        | gemini-2.5 | No      | -                            |
+| `gemini-2.5-flash`                   | flash      | gemini-2.5 | No      | -                            |
+| `gemini-2.5-flash-lite`              | flash-lite | gemini-2.5 | No      | -                            |
+| `gemma-4-26b-a4b-it`                 | pro        | gemma-4    | No      | -                            |
+| `gemma-4-31b-it`                     | pro        | gemma-4    | No      | -                            |
+| `gemma4:latest`                      | ollama     | gemma-4    | No      | Local Ollama model           |
+| `gemma4:e2b`                         | ollama     | gemma-4    | No      | Local Ollama (edge E2B)      |
+| `gemma4:e4b`                         | ollama     | gemma-4    | No      | Local Ollama (edge E4B)      |
+| `gemma4:26b`                         | ollama     | gemma-4    | No      | Local Ollama model           |
+| `gemma4:31b`                         | ollama     | gemma-4    | No      | Local Ollama model           |
+| `gemma4:31b-cloud`                   | ollama     | gemma-4    | No      | Local Ollama (cloud offload) |
 
 ### 1.2 Model Aliases
 
-| Alias             | Resolves To              | Description            |
-| ----------------- | ------------------------ | ---------------------- |
-| `auto`            | `gemini-3-pro-preview`   | Auto-select (Gemini 3) |
-| `auto-gemini-3`   | `gemini-3-pro-preview`   | Auto-select Gemini 3   |
-| `auto-gemini-2.5` | `gemini-2.5-pro`         | Auto-select Gemini 2.5 |
-| `pro`             | `gemini-3-pro-preview`   | Pro tier               |
-| `flash`           | `gemini-3-flash-preview` | Flash tier             |
-| `flash-lite`      | `gemini-2.5-flash-lite`  | Flash Lite tier        |
-| `gemma4`          | `gemma-4-26b-a4b-it`     | Gemma 4 26B            |
-| `gemma4-31b`      | `gemma-4-31b-it`         | Gemma 4 31B            |
-| `ollama`          | `gemma4:26b`             | Ollama local default   |
+| Alias              | Resolves To              | Description                |
+| ------------------ | ------------------------ | -------------------------- |
+| `auto`             | `gemini-3-pro-preview`   | Auto-select (Gemini 3)     |
+| `auto-gemini-3`    | `gemini-3-pro-preview`   | Auto-select Gemini 3       |
+| `auto-gemini-2.5`  | `gemini-2.5-pro`         | Auto-select Gemini 2.5     |
+| `pro`              | `gemini-3-pro-preview`   | Pro tier                   |
+| `flash`            | `gemini-3-flash-preview` | Flash tier                 |
+| `flash-lite`       | `gemini-2.5-flash-lite`  | Flash Lite tier            |
+| `gemma4`           | `gemma-4-26b-a4b-it`     | Gemma 4 26B                |
+| `gemma4-31b`       | `gemma-4-31b-it`         | Gemma 4 31B                |
+| `ollama`           | `gemma4:26b`             | Ollama local default       |
+| `gemma4-latest`    | `gemma4:latest`          | Ollama Gemma 4 default tag |
+| `gemma4-e2b`       | `gemma4:e2b`             | Ollama Gemma 4 E2B         |
+| `gemma4-e4b`       | `gemma4:e4b`             | Ollama Gemma 4 E4B         |
+| `gemma4-26b`       | `gemma4:26b`             | Ollama Gemma 4 26B         |
+| `gemma4-31b-cloud` | `gemma4:31b-cloud`       | Ollama Gemma 4 31B cloud   |
 
 ---
 
@@ -375,12 +384,25 @@ Ollama server.
 | `OLLAMA_API_KEY`    | `ollama`                    | API key (dummy for compatibility) |
 | `OLLAMA_USE_NATIVE` | `false`                     | Use native OllamaContentGenerator |
 
-### 11.3 Supported Local Models
+### 11.3 Supported local models (Gemma 4 on Ollama)
 
-| Model        | Alias        | Description           |
-| ------------ | ------------ | --------------------- |
-| `gemma4:26b` | `gemma4`     | Gemma 4 26B (default) |
-| `gemma4:31b` | `gemma4-31b` | Gemma 4 31B           |
+All tags below match the
+[Ollama Gemma 4 library](https://ollama.com/library/gemma4). Use them with `-m`
+/ `OLLAMA_MODEL`, or use the hyphen aliases for convenience when not setting
+`OLLAMA_MODEL` (aliases are resolved in the Ollama auth path).
+
+| Model              | Approx. size | Context | Hyphen alias                                                       |
+| ------------------ | ------------ | ------- | ------------------------------------------------------------------ |
+| `gemma4` (meta)    | —            | —       | Use `OLLAMA_MODEL=gemma4`; CLI alias `gemma4` maps to `gemma4:26b` |
+| `gemma4:latest`    | 9.6 GB       | 128K    | `gemma4-latest`                                                    |
+| `gemma4:e2b`       | 7.2 GB       | 128K    | `gemma4-e2b`                                                       |
+| `gemma4:e4b`       | 9.6 GB       | 128K    | `gemma4-e4b`                                                       |
+| `gemma4:26b`       | 18 GB        | 256K    | `gemma4-26b`                                                       |
+| `gemma4:31b`       | 20 GB        | 256K    | `gemma4-31b` (same as Google alias)                                |
+| `gemma4:31b-cloud` | (cloud)      | 256K    | `gemma4-31b-cloud`                                                 |
+
+To use the Ollama meta name `gemma4` unchanged, set `OLLAMA_MODEL=gemma4` (env
+overrides alias resolution).
 
 ### 11.4 Usage
 

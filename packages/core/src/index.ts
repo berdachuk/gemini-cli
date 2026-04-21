@@ -107,6 +107,29 @@ export * from './utils/promptIdContext.js';
 export * from './utils/thoughtUtils.js';
 export * from './utils/secure-browser-launcher.js';
 export * from './utils/debugLogger.js';
+export {
+  OLLAMA_AUTH_MODEL_ALIAS,
+  OLLAMA_LIBRARY_GEMMA4_TAGS,
+  isOllamaLibraryGemma4Tag,
+  resolveOllamaModelName,
+} from './utils/ollamaModelMapping.js';
+export type { OllamaLibraryGemma4Tag } from './utils/ollamaModelMapping.js';
+export {
+  OLLAMA_HUB_TAGS_URL,
+  fetchOllamaHubModelNames,
+  fetchOllamaModelCatalog,
+} from './utils/ollamaModelCatalog.js';
+export type {
+  OllamaCatalogEntry,
+  OllamaCatalogEntrySource,
+  OllamaModelCatalogResult,
+} from './utils/ollamaModelCatalog.js';
+export {
+  fetchOllamaModels,
+  validateOllamaModel,
+  checkOllamaConnection,
+} from './utils/ollamaModelUtils.js';
+export type { OllamaModelInfo } from './utils/ollamaModelUtils.js';
 export * from './utils/events.js';
 export * from './utils/extensionLoader.js';
 export * from './utils/package.js';

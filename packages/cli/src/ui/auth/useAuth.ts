@@ -93,7 +93,11 @@ export const useAuthCommand = (
 
       const authType = settings.merged.security.auth.selectedType;
       if (!authType) {
-        if (process.env['GEMINI_API_KEY']) {
+        if (process.env['OLLAMA_BASE_URL']) {
+          onAuthError(
+            'No authentication method selected. OLLAMA_BASE_URL is set: choose "Use Ollama (local)" to use your local Ollama server.',
+          );
+        } else if (process.env['GEMINI_API_KEY']) {
           onAuthError(
             'Existing API key detected (GEMINI_API_KEY). Select "Gemini API Key" option to use it.',
           );

@@ -207,6 +207,21 @@ describe('AuthDialog', () => {
         desc: 'from GEMINI_API_KEY env var',
       },
       {
+        setup: () => {
+          vi.stubEnv('OLLAMA_BASE_URL', 'http://localhost:11434/v1');
+        },
+        expected: AuthType.USE_OLLAMA,
+        desc: 'from OLLAMA_BASE_URL when no API key',
+      },
+      {
+        setup: () => {
+          vi.stubEnv('GEMINI_API_KEY', 'test-key');
+          vi.stubEnv('OLLAMA_BASE_URL', 'http://localhost:11434/v1');
+        },
+        expected: AuthType.USE_GEMINI,
+        desc: 'GEMINI_API_KEY wins over OLLAMA_BASE_URL for initial selection',
+      },
+      {
         setup: () => {},
         expected: AuthType.LOGIN_WITH_GOOGLE,
         desc: 'defaults to Sign in with Google',

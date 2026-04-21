@@ -11,6 +11,7 @@ import { AppContainer } from './ui/AppContainer.js';
 import { ConsolePatcher } from './ui/utils/ConsolePatcher.js';
 import { registerCleanup, setupTtyCheck } from './utils/cleanup.js';
 import {
+  AuthType,
   type StartupWarning,
   type Config,
   type ResumedSessionData,
@@ -168,16 +169,23 @@ export async function startInteractiveUI(
     });
   }
 
-  checkForUpdates(settings)
-    .then((info) => {
-      handleAutoUpdate(info, settings, config.getProjectRoot());
-    })
-    .catch((err) => {
-      // Silently ignore update check errors.
-      if (config.getDebugMode()) {
-        debugLogger.warn('Update check failed:', err);
-      }
-    });
+  const offline =
+    process.env['GEMINI_CLI_OFFLINE'] === '1' ||
+    process.env['GEMINI_CLI_OFFLINE'] === 'true';
+  const ollamaAuth =
+    settings.merged.security?.auth?.selectedType === AuthType.USE_OLLAMA;
+  if (!offline && !ollamaAuth) {
+    checkForUpdates(settings)
+      .then((info) => {
+        handleAutoUpdate(info, settings, config.getProjectRoot());
+      })
+      .catch((err) => {
+        // Silently ignore update check errors.
+        if (config.getDebugMode()) {
+          debugLogger.warn('Update check failed:', err);
+        }
+      });
+  }
 
   registerCleanup(() => instance.unmount());
 

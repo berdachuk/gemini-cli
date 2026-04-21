@@ -9,6 +9,7 @@ import {
   createContentGenerator,
   AuthType,
   createContentGeneratorConfig,
+  getAuthTypeFromEnv,
   type ContentGenerator,
   validateBaseUrl,
 } from './contentGenerator.js';
@@ -744,6 +745,30 @@ describe('createContentGeneratorConfig', () => {
     );
     expect(config.apiKey).toBe('gateway-placeholder-key');
     expect(config.vertexai).toBe(false);
+  });
+});
+
+describe('getAuthTypeFromEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns USE_OLLAMA when GEMINI_CLI_AUTH=ollama even if GEMINI_API_KEY is set', () => {
+    vi.stubEnv('GEMINI_CLI_AUTH', 'ollama');
+    vi.stubEnv('GEMINI_API_KEY', 'secret');
+    expect(getAuthTypeFromEnv()).toBe(AuthType.USE_OLLAMA);
+  });
+
+  it('returns USE_GEMINI when GEMINI_CLI_AUTH=gemini-api-key', () => {
+    vi.stubEnv('GEMINI_CLI_AUTH', 'gemini-api-key');
+    vi.stubEnv('OLLAMA_BASE_URL', 'http://localhost:11434/v1');
+    expect(getAuthTypeFromEnv()).toBe(AuthType.USE_GEMINI);
+  });
+
+  it('ignores invalid GEMINI_CLI_AUTH values', () => {
+    vi.stubEnv('GEMINI_CLI_AUTH', 'not-a-real-auth');
+    vi.stubEnv('GEMINI_API_KEY', 'k');
+    expect(getAuthTypeFromEnv()).toBe(AuthType.USE_GEMINI);
   });
 });
 

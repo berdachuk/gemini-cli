@@ -1421,6 +1421,50 @@ export class Config implements McpContext, AgentLoopContext {
     if ((await this.getProModelNoAccess()) && isAutoModel(this.model)) {
       this.setModel(PREVIEW_GEMINI_FLASH_MODEL);
     }
+
+    this.reconcileWebSearchToolForAuth();
+  }
+
+  /**
+   * Google Search grounding is unavailable with Ollama; remove the tool when
+   * switching to local auth and restore it when switching away (if enabled).
+   */
+  private reconcileWebSearchToolForAuth(): void {
+    if (!this._toolRegistry) {
+      return;
+    }
+    const ollama =
+      this.contentGeneratorConfig?.authType === AuthType.USE_OLLAMA;
+    const toolName = WebSearchTool.Name;
+    const registered = this.toolRegistry.getTool(toolName) !== undefined;
+
+    if (ollama && registered) {
+      this.toolRegistry.unregisterTool(toolName);
+      debugLogger.debug(
+        'WebSearchTool omitted: Google Search grounding is not available with Ollama auth.',
+      );
+      return;
+    }
+
+    if (!ollama && !registered) {
+      const coreTools = this.getCoreTools();
+      let enabled = true;
+      if (coreTools) {
+        const normalizedClassName = WebSearchTool.name.replace(/^_+/, '');
+        enabled = coreTools.some(
+          (tool) =>
+            tool === toolName ||
+            tool === normalizedClassName ||
+            tool.startsWith(`${toolName}(`) ||
+            tool.startsWith(`${normalizedClassName}(`),
+        );
+      }
+      if (enabled) {
+        this.toolRegistry.registerTool(
+          new WebSearchTool(this, this.messageBus),
+        );
+      }
+    }
   }
 
   async getExperimentsAsync(): Promise<Experiments | undefined> {
