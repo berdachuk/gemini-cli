@@ -92,9 +92,11 @@ export const DEFAULT_GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
 export const OLLAMA_BASE_URL = 'http://localhost:11434/v1';
 export const OLLAMA_DEFAULT_MODEL = 'gemma4:26b';
 export const OLLAMA_ALT_MODEL = 'gemma4:31b-cloud';
+export const OLLAMA_ALT_MODEL_BARE = 'gemma4:31b';
 export const GEMMA_MODEL_ALIAS_OLLAMA = 'ollama';
 export const GEMMA_MODEL_ALIAS_OLLAMA_26B = 'gemma4-26b';
 export const GEMMA_MODEL_ALIAS_OLLAMA_31B = 'gemma4-31b-cloud';
+export const GEMMA_MODEL_ALIAS_OLLAMA_31B_BARE = 'gemma4-31b';
 
 // Cap the thinking at 8192 to prevent run-away thinking loops.
 export const DEFAULT_THINKING_MODE = 8192;
@@ -165,6 +167,10 @@ export function resolveModel(
     }
     case GEMMA_MODEL_ALIAS_OLLAMA_31B: {
       resolved = OLLAMA_ALT_MODEL;
+      break;
+    }
+    case GEMMA_MODEL_ALIAS_OLLAMA_31B_BARE: {
+      resolved = OLLAMA_ALT_MODEL_BARE;
       break;
     }
     default: {

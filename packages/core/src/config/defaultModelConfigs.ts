@@ -390,6 +390,13 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       isVisible: true,
       features: { thinking: false, multimodalToolUse: false },
     },
+    'gemma4:31b': {
+      tier: 'ollama',
+      family: 'ollama',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
+    },
     'gemma4:31b-cloud': {
       tier: 'ollama',
       family: 'ollama',
@@ -523,6 +530,9 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
     },
     'gemma4:26b': {
       default: 'gemma4:26b',
+    },
+    'gemma4:31b': {
+      default: 'gemma4:31b',
     },
     'gemma4:31b-cloud': {
       default: 'gemma4:31b-cloud',
