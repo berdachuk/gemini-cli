@@ -89,6 +89,28 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         model: 'gemini-2.5-flash-lite',
       },
     },
+    gemma4: {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemma-4-26b-a4b-it',
+        generateContentConfig: {
+          temperature: 1,
+          topP: 0.95,
+          topK: 64,
+        },
+      },
+    },
+    'gemma4-31b': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemma-4-31b-it',
+        generateContentConfig: {
+          temperature: 1,
+          topP: 0.95,
+          topK: 64,
+        },
+      },
+    },
     // Bases for the internal model configs.
     'gemini-2.5-flash-base': {
       extends: 'base',
@@ -218,11 +240,6 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         model: 'gemini-3-flash-preview',
       },
     },
-    'chat-compression-3.1-flash-lite': {
-      modelConfig: {
-        model: 'gemini-3.1-flash-lite-preview',
-      },
-    },
     'chat-compression-2.5-pro': {
       modelConfig: {
         model: 'gemini-2.5-pro',
@@ -243,33 +260,6 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         model: 'gemini-3-pro-preview',
       },
     },
-    'agent-history-provider-summarizer': {
-      modelConfig: {
-        model: 'gemini-3-flash-preview',
-      },
-    },
-    // Ollama model configs
-    'ollama-base': {
-      extends: 'base',
-      modelConfig: {
-        generateContentConfig: {
-          temperature: 1,
-          topP: 0.95,
-        },
-      },
-    },
-    'ollama-gemma4-26b': {
-      extends: 'ollama-base',
-      modelConfig: {
-        model: 'gemma4:26b',
-      },
-    },
-    'ollama-gemma4-31b-cloud': {
-      extends: 'ollama-base',
-      modelConfig: {
-        model: 'gemma4:31b-cloud',
-      },
-    },
   },
   overrides: [
     {
@@ -283,13 +273,6 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
   ],
   modelDefinitions: {
     // Concrete Models
-    'gemini-3.1-flash-lite-preview': {
-      tier: 'flash-lite',
-      family: 'gemini-3',
-      isPreview: true,
-      isVisible: true,
-      features: { thinking: false, multimodalToolUse: true },
-    },
     'gemini-3.1-pro-preview': {
       tier: 'pro',
       family: 'gemini-3',
@@ -339,12 +322,38 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       isVisible: true,
       features: { thinking: false, multimodalToolUse: false },
     },
+    'gemma-4-26b-a4b-it': {
+      tier: 'pro',
+      family: 'gemma-4',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
+    },
+    'gemma-4-31b-it': {
+      tier: 'pro',
+      family: 'gemma-4',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
+    },
     // Aliases
     auto: {
       tier: 'auto',
       isPreview: true,
       isVisible: false,
       features: { thinking: true, multimodalToolUse: false },
+    },
+    gemma4: {
+      tier: 'pro',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
+    },
+    'gemma4-31b': {
+      tier: 'pro',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
     },
     pro: {
       tier: 'pro',
@@ -370,7 +379,7 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       isPreview: true,
       isVisible: true,
       dialogDescription:
-        'Let Gemini CLI decide the best model for the task: gemini-3-pro, gemini-3-flash',
+        'Let Gemini CLI decide the best model for the task: gemini-3.1-pro, gemini-3-flash',
       features: { thinking: true, multimodalToolUse: false },
     },
     'auto-gemini-2.5': {
@@ -382,62 +391,8 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         'Let Gemini CLI decide the best model for the task: gemini-2.5-pro, gemini-2.5-flash',
       features: { thinking: false, multimodalToolUse: false },
     },
-    // Ollama/OpenAI-compatible models
-    'gemma4:26b': {
-      tier: 'ollama',
-      family: 'ollama',
-      isPreview: false,
-      isVisible: true,
-      features: { thinking: false, multimodalToolUse: false },
-    },
-    'gemma4:31b': {
-      tier: 'ollama',
-      family: 'ollama',
-      isPreview: false,
-      isVisible: true,
-      features: { thinking: false, multimodalToolUse: false },
-    },
-    'gemma4:31b-cloud': {
-      tier: 'ollama',
-      family: 'ollama',
-      isPreview: false,
-      isVisible: true,
-      features: { thinking: false, multimodalToolUse: false },
-    },
-    ollama: {
-      displayName: 'Ollama (Local)',
-      tier: 'ollama',
-      isPreview: false,
-      isVisible: true,
-      features: { thinking: false, multimodalToolUse: false },
-    },
   },
   modelIdResolutions: {
-    'gemini-3.1-pro-preview': {
-      default: 'gemini-3.1-pro-preview',
-      contexts: [
-        { condition: { hasAccessToPreview: false }, target: 'gemini-2.5-pro' },
-        {
-          condition: { useCustomTools: true },
-          target: 'gemini-3.1-pro-preview-customtools',
-        },
-      ],
-    },
-    'gemini-3.1-pro-preview-customtools': {
-      default: 'gemini-3.1-pro-preview-customtools',
-      contexts: [
-        { condition: { hasAccessToPreview: false }, target: 'gemini-2.5-pro' },
-      ],
-    },
-    'gemini-3-flash-preview': {
-      default: 'gemini-3-flash-preview',
-      contexts: [
-        {
-          condition: { hasAccessToPreview: false },
-          target: 'gemini-2.5-flash',
-        },
-      ],
-    },
     'gemini-3-pro-preview': {
       default: 'gemini-3-pro-preview',
       contexts: [
@@ -497,15 +452,6 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
     'auto-gemini-2.5': {
       default: 'gemini-2.5-pro',
     },
-    'gemini-3.1-flash-lite-preview': {
-      default: 'gemini-3.1-flash-lite-preview',
-      contexts: [
-        {
-          condition: { useGemini3_1FlashLite: false },
-          target: 'gemini-2.5-flash-lite',
-        },
-      ],
-    },
     flash: {
       default: 'gemini-3-flash-preview',
       contexts: [
@@ -517,25 +463,12 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
     },
     'flash-lite': {
       default: 'gemini-2.5-flash-lite',
-      contexts: [
-        {
-          condition: { useGemini3_1FlashLite: true },
-          target: 'gemini-3.1-flash-lite-preview',
-        },
-      ],
     },
-    // Ollama model resolutions
-    ollama: {
-      default: 'gemma4:26b',
+    gemma4: {
+      default: 'gemma-4-26b-a4b-it',
     },
-    'gemma4:26b': {
-      default: 'gemma4:26b',
-    },
-    'gemma4:31b': {
-      default: 'gemma4:31b',
-    },
-    'gemma4:31b-cloud': {
-      default: 'gemma4:31b-cloud',
+    'gemma4-31b': {
+      default: 'gemma-4-31b-it',
     },
   },
   classifierIdResolutions: {
@@ -571,154 +504,5 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         },
       ],
     },
-  },
-  modelChains: {
-    preview: [
-      {
-        model: 'gemini-3-pro-preview',
-        actions: {
-          terminal: 'prompt',
-          transient: 'prompt',
-          not_found: 'prompt',
-          unknown: 'prompt',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-      {
-        model: 'gemini-3-flash-preview',
-        isLastResort: true,
-        actions: {
-          terminal: 'prompt',
-          transient: 'prompt',
-          not_found: 'prompt',
-          unknown: 'prompt',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-    ],
-    default: [
-      {
-        model: 'gemini-2.5-pro',
-        actions: {
-          terminal: 'prompt',
-          transient: 'prompt',
-          not_found: 'prompt',
-          unknown: 'prompt',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-      {
-        model: 'gemini-2.5-flash',
-        isLastResort: true,
-        actions: {
-          terminal: 'prompt',
-          transient: 'prompt',
-          not_found: 'prompt',
-          unknown: 'prompt',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-    ],
-    lite: [
-      {
-        model: 'gemini-2.5-flash-lite',
-        actions: {
-          terminal: 'silent',
-          transient: 'silent',
-          not_found: 'silent',
-          unknown: 'silent',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-      {
-        model: 'gemini-2.5-flash',
-        actions: {
-          terminal: 'silent',
-          transient: 'silent',
-          not_found: 'silent',
-          unknown: 'silent',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-      {
-        model: 'gemini-2.5-pro',
-        isLastResort: true,
-        actions: {
-          terminal: 'silent',
-          transient: 'silent',
-          not_found: 'silent',
-          unknown: 'silent',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-    ],
-    ollama: [
-      {
-        model: 'gemma4:26b',
-        actions: {
-          terminal: 'prompt',
-          transient: 'prompt',
-          not_found: 'prompt',
-          unknown: 'prompt',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-      {
-        model: 'gemma4:31b-cloud',
-        isLastResort: true,
-        actions: {
-          terminal: 'prompt',
-          transient: 'prompt',
-          not_found: 'prompt',
-          unknown: 'prompt',
-        },
-        stateTransitions: {
-          terminal: 'terminal',
-          transient: 'terminal',
-          not_found: 'terminal',
-          unknown: 'terminal',
-        },
-      },
-    ],
   },
 };

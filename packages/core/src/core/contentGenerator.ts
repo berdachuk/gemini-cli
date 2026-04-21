@@ -25,6 +25,7 @@ import { parseCustomHeaders } from '../utils/customHeaderUtils.js';
 import { determineSurface } from '../utils/surface.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
 import { getVersion, resolveModel } from '../../index.js';
+import { createOllamaContentGenerator } from './ollamaContentGenerator.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
 
 /**
@@ -161,6 +162,15 @@ export async function createContentGeneratorConfig(
     return contentGeneratorConfig;
   }
 
+  if (authType === AuthType.USE_OLLAMA) {
+    contentGeneratorConfig.apiKey = process.env['OLLAMA_API_KEY'] || 'ollama';
+    contentGeneratorConfig.baseUrl =
+      baseUrl || process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434/v1';
+    contentGeneratorConfig.vertexai = false;
+
+    return contentGeneratorConfig;
+  }
+
   return contentGeneratorConfig;
 }
 
@@ -286,6 +296,17 @@ export async function createContentGenerator(
         process.env['OLLAMA_BASE_URL'] ||
         'http://localhost:11434/v1';
       const ollamaApiKey = process.env['OLLAMA_API_KEY'] || 'ollama';
+      const ollamaModel =
+        process.env['OLLAMA_MODEL'] || gcConfig.getModel() || 'gemma4:26b';
+
+      if (process.env['OLLAMA_USE_NATIVE'] === 'true') {
+        const ollamaGenerator = createOllamaContentGenerator(
+          ollamaBaseUrl,
+          ollamaModel,
+          ollamaApiKey,
+        );
+        return new LoggingContentGenerator(ollamaGenerator, gcConfig);
+      }
 
       if (ollamaApiKey) {
         headers['Authorization'] = `Bearer ${ollamaApiKey}`;
