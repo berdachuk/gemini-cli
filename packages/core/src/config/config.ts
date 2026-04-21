@@ -2028,6 +2028,18 @@ export class Config implements McpContext, AgentLoopContext {
     return this.embeddingModel;
   }
 
+  getOllamaBaseUrl(): string {
+    return process.env['OLLAMA_BASE_URL'] || 'http://localhost:11434/v1';
+  }
+
+  getOllamaModel(): string {
+    return process.env['OLLAMA_MODEL'] || 'gemma4:26b';
+  }
+
+  isOllamaEnabled(): boolean {
+    return process.env['OLLAMA_BASE_URL'] !== undefined;
+  }
+
   getSandbox(): SandboxConfig | undefined {
     return this.sandbox;
   }

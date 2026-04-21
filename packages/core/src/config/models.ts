@@ -83,6 +83,14 @@ export const GEMINI_MODEL_ALIAS_FLASH_LITE = 'flash-lite';
 
 export const DEFAULT_GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
 
+// Ollama/OpenAI-compatible model constants
+export const OLLAMA_BASE_URL = 'http://localhost:11434/v1';
+export const OLLAMA_DEFAULT_MODEL = 'gemma4:26b';
+export const OLLAMA_ALT_MODEL = 'gemma4:31b-cloud';
+export const GEMMA_MODEL_ALIAS_OLLAMA = 'ollama';
+export const GEMMA_MODEL_ALIAS_OLLAMA_26B = 'gemma4-26b';
+export const GEMMA_MODEL_ALIAS_OLLAMA_31B = 'gemma4-31b-cloud';
+
 // Cap the thinking at 8192 to prevent run-away thinking loops.
 export const DEFAULT_THINKING_MODE = 8192;
 
@@ -152,6 +160,15 @@ export function resolveModel(
       resolved = useGemini3_1FlashLite
         ? PREVIEW_GEMINI_3_1_FLASH_LITE_MODEL
         : DEFAULT_GEMINI_FLASH_LITE_MODEL;
+      break;
+    }
+    case GEMMA_MODEL_ALIAS_OLLAMA:
+    case GEMMA_MODEL_ALIAS_OLLAMA_26B: {
+      resolved = OLLAMA_DEFAULT_MODEL;
+      break;
+    }
+    case GEMMA_MODEL_ALIAS_OLLAMA_31B: {
+      resolved = OLLAMA_ALT_MODEL;
       break;
     }
     default: {
@@ -371,6 +388,26 @@ export function isCustomModel(
   }
   const resolved = resolveModel(model);
   return !resolved.startsWith('gemini-');
+}
+
+/**
+ * Checks if Ollama mode is enabled via environment variable.
+ *
+ * @returns True if OLLAMA_BASE_URL is set.
+ */
+export function isOllamaEnabled(): boolean {
+  return process.env['OLLAMA_BASE_URL'] !== undefined;
+}
+
+/**
+ * Checks if the model is an Ollama model.
+ *
+ * @param model The model name to check.
+ * @returns True if the model is an Ollama/local model.
+ */
+export function isOllamaModel(model: string): boolean {
+  const resolved = resolveModel(model);
+  return resolved.startsWith('ollama://') || resolved.includes(':');
 }
 
 /**

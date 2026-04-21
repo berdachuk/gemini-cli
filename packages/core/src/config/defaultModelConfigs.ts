@@ -248,6 +248,28 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         model: 'gemini-3-flash-preview',
       },
     },
+    // Ollama model configs
+    'ollama-base': {
+      extends: 'base',
+      modelConfig: {
+        generateContentConfig: {
+          temperature: 1,
+          topP: 0.95,
+        },
+      },
+    },
+    'ollama-gemma4-26b': {
+      extends: 'ollama-base',
+      modelConfig: {
+        model: 'gemma4:26b',
+      },
+    },
+    'ollama-gemma4-31b-cloud': {
+      extends: 'ollama-base',
+      modelConfig: {
+        model: 'gemma4:31b-cloud',
+      },
+    },
   },
   overrides: [
     {
@@ -358,6 +380,28 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       isVisible: true,
       dialogDescription:
         'Let Gemini CLI decide the best model for the task: gemini-2.5-pro, gemini-2.5-flash',
+      features: { thinking: false, multimodalToolUse: false },
+    },
+    // Ollama/OpenAI-compatible models
+    'gemma4:26b': {
+      tier: 'ollama',
+      family: 'ollama',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
+    },
+    'gemma4:31b-cloud': {
+      tier: 'ollama',
+      family: 'ollama',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: false },
+    },
+    ollama: {
+      displayName: 'Ollama (Local)',
+      tier: 'ollama',
+      isPreview: false,
+      isVisible: true,
       features: { thinking: false, multimodalToolUse: false },
     },
   },
@@ -472,6 +516,16 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
           target: 'gemini-3.1-flash-lite-preview',
         },
       ],
+    },
+    // Ollama model resolutions
+    ollama: {
+      default: 'gemma4:26b',
+    },
+    'gemma4:26b': {
+      default: 'gemma4:26b',
+    },
+    'gemma4:31b-cloud': {
+      default: 'gemma4:31b-cloud',
     },
   },
   classifierIdResolutions: {
@@ -614,6 +668,39 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
           transient: 'silent',
           not_found: 'silent',
           unknown: 'silent',
+        },
+        stateTransitions: {
+          terminal: 'terminal',
+          transient: 'terminal',
+          not_found: 'terminal',
+          unknown: 'terminal',
+        },
+      },
+    ],
+    ollama: [
+      {
+        model: 'gemma4:26b',
+        actions: {
+          terminal: 'prompt',
+          transient: 'prompt',
+          not_found: 'prompt',
+          unknown: 'prompt',
+        },
+        stateTransitions: {
+          terminal: 'terminal',
+          transient: 'terminal',
+          not_found: 'terminal',
+          unknown: 'terminal',
+        },
+      },
+      {
+        model: 'gemma4:31b-cloud',
+        isLastResort: true,
+        actions: {
+          terminal: 'prompt',
+          transient: 'prompt',
+          not_found: 'prompt',
+          unknown: 'prompt',
         },
         stateTransitions: {
           terminal: 'terminal',

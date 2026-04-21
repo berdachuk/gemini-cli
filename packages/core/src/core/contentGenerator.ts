@@ -63,6 +63,7 @@ export enum AuthType {
   LEGACY_CLOUD_SHELL = 'cloud-shell',
   COMPUTE_ADC = 'compute-default-credentials',
   GATEWAY = 'gateway',
+  USE_OLLAMA = 'ollama',
 }
 
 /**
@@ -82,6 +83,9 @@ export function getAuthTypeFromEnv(): AuthType | undefined {
   }
   if (process.env['GEMINI_API_KEY']) {
     return AuthType.USE_GEMINI;
+  }
+  if (process.env['OLLAMA_BASE_URL']) {
+    return AuthType.USE_OLLAMA;
   }
   if (
     process.env['CLOUD_SHELL'] === 'true' ||
@@ -316,6 +320,38 @@ export async function createContentGenerator(
         vertexai: config.vertexai ?? config.authType === AuthType.USE_VERTEX_AI,
         httpOptions,
         ...(apiVersionEnv && { apiVersion: apiVersionEnv }),
+      });
+      return new LoggingContentGenerator(googleGenAI.models, gcConfig);
+    }
+
+    if (config.authType === AuthType.USE_OLLAMA) {
+      let headers: Record<string, string> = { ...baseHeaders };
+      if (config.customHeaders) {
+        headers = { ...headers, ...config.customHeaders };
+      }
+
+      const ollamaBaseUrl =
+        config.baseUrl ||
+        process.env['OLLAMA_BASE_URL'] ||
+        'http://localhost:11434/v1';
+      const ollamaApiKey = process.env['OLLAMA_API_KEY'] || 'ollama';
+
+      if (ollamaApiKey) {
+        headers['Authorization'] = `Bearer ${ollamaApiKey}`;
+      }
+
+      const httpOptions: {
+        baseUrl?: string;
+        headers: Record<string, string>;
+      } = {
+        baseUrl: ollamaBaseUrl,
+        headers,
+      };
+
+      const googleGenAI = new GoogleGenAI({
+        apiKey: ollamaApiKey,
+        vertexai: false,
+        httpOptions,
       });
       return new LoggingContentGenerator(googleGenAI.models, gcConfig);
     }
