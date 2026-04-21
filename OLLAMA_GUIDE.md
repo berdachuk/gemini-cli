@@ -16,7 +16,8 @@ Google authentication or an internet connection.
 | Model              | Alias              | Description           |
 | ------------------ | ------------------ | --------------------- |
 | `gemma4:26b`       | `gemma4-26b`       | Gemma 4 26B (default) |
-| `gemma4:31b-cloud` | `gemma4-31b-cloud` | Gemma 4 31B           |
+| `gemma4:31b`       | `gemma4-31b`       | Gemma 4 31B           |
+| `gemma4:31b-cloud` | `gemma4-31b-cloud` | Gemma 4 31B (cloud)   |
 
 ---
 
@@ -39,7 +40,10 @@ curl -fsSL https://ollama.com/install.sh | sh
 # Pull Gemma 4 26B (default model)
 ollama pull gemma4:26b
 
-# Pull Gemma 4 31B (optional)
+# Pull Gemma 4 31B
+ollama pull gemma4:31b
+
+# Pull Gemma 4 31B (cloud variant, optional)
 ollama pull gemma4:31b-cloud
 
 # Verify installed models
