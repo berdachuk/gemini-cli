@@ -76,7 +76,8 @@ Startup / --local-backend <name>
           ├── GET {baseUrl}/v1/models
           ├── Filter by Gemma family patterns:
           │     - Contains 'gemma' (case-insensitive)
-          │     - Exclude: embedding-only models, functiongemma
+          │     - Exclude: embedding-only models
+          │     - Special classification: functiongemma → ToolFilter service
           ├── Group by family (gemma2, gemma3, gemma4)
           ├── Map discovered IDs to aliases per family:
           │     gemma4 → 26B variant (default), 31B, 31B-cloud
@@ -1237,7 +1238,8 @@ LocalModelService
 │
 ├── filterGemmaModels(models): LocalModel[]
 │     └── Pattern match IDs containing 'gemma' (case-insensitive)
-│         Exclude: functiongemma, embedding-only variants
+│         Exclude: embedding-only variants
+│         Separate: functiongemma → ToolFilter (not a chat model)
 │         Group by family: gemma2, gemma3, gemma4
 │
 ├── resolveModelName(alias, discoveredModels): string | undefined
@@ -1500,7 +1502,227 @@ Warning: Model 'gemma4:26b' not found locally.
 
 ---
 
-## 9. Implementation Plan
+## 9. FunctionGemma: Intelligent Tool Filtering
+
+### 9.1 Overview
+
+gemini-cli exposes **28+ tools** (file operations, search, shell execution, web
+fetch, MCP tools, etc.) to the model on every turn via `FunctionDeclaration[]`
+in the API call. For local Gemma 4 models running with constrained context
+windows (especially E2B/E4B at ~32K effective tokens), tool definitions alone
+can consume 10-40% of the available context budget, leaving less room for
+conversation history, file contents, and generated code.
+
+**FunctionGemma** is a specialized 270M-parameter variant of Google's Gemma 3,
+fine-tuned specifically for function calling. At only **301MB** (Q4_K_M), it
+runs with minimal VRAM overhead and can quickly classify which tools are
+relevant to the current conversation context.
+
+> **FunctionGemma details**
+>
+> - **Based on**: Gemma 3 270M (same architecture, different chat format)
+> - **Size**: 301MB (Q4_K_M), 32K context window
+> - **Training**: 6T tokens of public tool definitions + tool use interactions
+> - **Ollama tag**: `functiongemma:270m` (= `functiongemma:latest`)
+> - **Requirements**: Ollama v0.13.5+
+> - **BFCL benchmarks**: Simple 61.6%, Multiple 63.5%, Parallel 39%, Relevance
+>   61.1%, Irrelevance 73.7%
+> - **Source**: https://ollama.com/library/functiongemma
+
+### 9.2 How It Works
+
+FunctionGemma acts as a **tool relevance router** — a lightweight pre-filter
+between gemini-cli's tool registry and the main Gemma 4 model:
+
+```
+Before each turn to the main model:
+                              ┌──────────────────────────────┐
+                              │   ToolRegistry               │
+                              │   28+ tools available         │
+                              └──────────┬───────────────────┘
+                                         │
+                                         ▼
+┌────────────────────┐    ┌─────────────────────────────┐
+│ Conversation       │    │  FunctionGemma (270M)       │
+│ context (last ~3   │───▶│  "Given this context,      │
+│ messages + user    │    │   which tools are needed?"  │
+│ query)             │    └────────────┬────────────────┘
+└────────────────────┘                 │
+                                       ▼
+                              ┌──────────────────────────────┐
+                              │  Filtered tools (2-5)        │
+                              │  Only these sent to model    │
+                              └──────────┬───────────────────┘
+                                         │
+                                         ▼
+                              ┌──────────────────────────────┐
+                              │  Main Gemma 4 Model          │
+                              │  26B/31B/E4B/E2B             │
+                              │  Receives reduced tool list  │
+                              └──────────────────────────────┘
+```
+
+### 9.3 Context Savings
+
+| Scenario                  | All Tools (28) | Filtered (avg 4) | Context Saved | Effective Gain         |
+| ------------------------- | -------------- | ---------------- | ------------- | ---------------------- |
+| **gemma4:e2b** (~32K ctx) | ~3,500 tokens  | ~600 tokens      | ~2,900 tokens | ~9% of context budget  |
+| **gemma4:e4b** (~32K ctx) | ~3,500 tokens  | ~600 tokens      | ~2,900 tokens | ~9% of context budget  |
+| **gemma4:26b** (~32K ctx) | ~4,200 tokens  | ~700 tokens      | ~3,500 tokens | ~11% of context budget |
+| **gemma4:31b** (~16K ctx) | ~4,200 tokens  | ~700 tokens      | ~3,500 tokens | ~22% of context budget |
+
+For edge models running with heavily constrained context, every 3,000 tokens
+saved represents meaningful headroom for file content, code, and conversation
+history.
+
+### 9.4 Configuration
+
+FunctionGemma tool filtering is **opt-in** and configurable:
+
+```json
+{
+  "localModel": {
+    "backend": "ollama",
+    "toolFiltering": {
+      "enabled": false,
+      "model": "functiongemma:270m",
+      "maxContextMessages": 3,
+      "fallbackBehavior": "all-tools",
+      "cacheResults": true,
+      "cacheTtl": 30000
+    }
+  }
+}
+```
+
+| Field                              | Type                                           | Default                | Description                                        |
+| ---------------------------------- | ---------------------------------------------- | ---------------------- | -------------------------------------------------- |
+| `toolFiltering.enabled`            | `boolean`                                      | `false`                | Enable FunctionGemma-based tool filtering          |
+| `toolFiltering.model`              | `string`                                       | `"functiongemma:270m"` | Ollama model tag for the filtering model           |
+| `toolFiltering.maxContextMessages` | `number`                                       | `3`                    | Max conversation messages sent for context         |
+| `toolFiltering.fallbackBehavior`   | `"all-tools"` \| `"no-tools"` \| `"core-only"` | `"all-tools"`          | Behavior when FunctionGemma fails                  |
+| `toolFiltering.cacheResults`       | `boolean`                                      | `true`                 | Cache tool relevance decisions for similar queries |
+| `toolFiltering.cacheTtl`           | `number`                                       | `30000`                | Cache time-to-live in milliseconds (30s)           |
+
+### 9.5 VRAM Impact & Disabling
+
+| Component              | VRAM Usage       |
+| ---------------------- | ---------------- |
+| FunctionGemma (Q4_K_M) | ~301 MB          |
+| Main Gemma 4 model     | 7-63 GB (varies) |
+| **Total overhead**     | **~301 MB**      |
+
+The additional VRAM overhead is minimal (~301MB) relative to Gemma 4 models.
+However, users running on **tight VRAM budgets** (e.g., Gemma-4-26B Q4_K_M on
+16GB GPU with ~4K context) can disable tool filtering entirely by setting
+`toolFiltering.enabled: false` (the default).
+
+A startup VRAM check warns if enabling filtering would push total VRAM usage
+beyond available capacity:
+
+```
+Warning: Tool filtering requires ~301MB additional VRAM.
+         With gemma4:26b loaded, only ~250MB VRAM remains.
+         Tool filtering disabled to avoid OOM. Set toolFiltering.enabled: false to suppress.
+```
+
+### 9.6 Known Limitations
+
+| Limitation                    | Impact                                                        | Mitigation                                                                                         |
+| ----------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| BFCL Simple only 61.6%        | May occasionally omit needed tools or include irrelevant ones | Fallback to `all-tools` on detection of missing tool calls in response                             |
+| Parallel tool selection (39%) | Complex multi-tool workflows may get incomplete tool sets     | Only applies filtering on first turn; subsequent turns get full tool set after tool results arrive |
+| Ollama-only                   | Only works with Ollama backend                                | Feature gates on `backend === 'ollama'`; other backends skip filtering silently                    |
+| Adds ~200-500ms latency       | Extra inference call before main model                        | Caching eliminates latency for repeated similar queries; async pre-fetch possible                  |
+| Text-only (no multimodal)     | Cannot evaluate image/audio relevance                         | Falls back to `all-tools` when conversation contains multimodal content                            |
+
+### 9.7 Integration Flow
+
+```
+Before each turn:
+  │
+  ├── 1. Config check: toolFiltering.enabled === true?
+  │     └── No → send all tools (current behavior)
+  │
+  ├── 2. Backend check: is backend 'ollama'?
+  │     └── No → skip filtering for non-Ollama backends
+  │
+  ├── 3. Multimodal check: does conversation contain images/audio?
+  │     └── Yes → fall back to all tools (FunctionGemma is text-only)
+  │
+  ├── 4. Cache check: hash of (tools + recent messages) in cache?
+  │     └── Yes → return cached filtered tool set
+  │
+  ├── 5. Run FunctionGemma:
+  │     ├── Ollama model: functiongemma:270m (or configured model)
+  │     ├── Input:  tool names + descriptions + last N messages + user query
+  │     ├── Output: list of relevant tool names
+  │     └── Timeout: 2000ms
+  │
+  ├── 6. Validate output:
+  │     ├── Empty result → fallback: all tools
+  │     ├── All 28 tools → fallback: treat as error
+  │     ├── Unknown tool names → strip them
+  │     └── Valid subset (1-10 tools) → use as filter
+  │
+  ├── 7. Cache result with TTL
+  │
+  └── 8. Send to ToolRegistry.getFunctionDeclarations(filtered)
+        └── Only selected tools' FunctionDeclarations are sent to main model
+```
+
+### 9.8 Implementation
+
+Create `packages/core/src/services/toolFilter.ts`:
+
+```typescript
+export interface ToolFilterConfig {
+  enabled: boolean;
+  model: string;
+  maxContextMessages: number;
+  fallbackBehavior: 'all-tools' | 'no-tools' | 'core-only';
+  cacheResults: boolean;
+  cacheTtl: number;
+}
+
+export class ToolFilter {
+  private cache: Map<string, { tools: string[]; expiresAt: number }>;
+
+  constructor(
+    private config: ToolFilterConfig,
+    private ollamaBaseUrl: string,
+  ) {}
+
+  async filterTools(
+    allTools: DeclarativeTool[],
+    recentMessages: Message[],
+    userQuery: string,
+  ): Promise<DeclarativeTool[]> { ... }
+
+  private async callFunctionGemma(
+    toolNames: string[],
+    toolDescriptions: string[],
+    messages: Message[],
+    userQuery: string,
+  ): Promise<string[]> { ... }
+
+  private validateToolNames(
+    requested: string[],
+    available: Set<string>,
+  ): string[] { ... }
+
+  private getCacheKey(
+    tools: string[],
+    messages: Message[],
+  ): string { ... }
+
+  clearCache(): void { ... }
+}
+```
+
+---
+
+## 10. Implementation Plan
 
 ### Phase 1: Core Infrastructure
 
@@ -1528,16 +1750,26 @@ Warning: Model 'gemma4:26b' not found locally.
 11. Add CLI flags for `--local-backend`
 12. Add health check and connectivity validation
 
-### Phase 5: Testing
+### Phase 5: Tool Filtering (FunctionGemma)
 
-13. Unit tests for `LocalModelService`
-14. Unit tests for content generator creation with local backends
-15. Integration tests for local backend connectivity
-16. Documentation updates
+13. Create `ToolFilter` service (`packages/core/src/services/toolFilter.ts`)
+14. Implement FunctionGemma invocation via Ollama API
+15. Integrate `ToolFilter` into `ToolRegistry.getFunctionDeclarations()`
+16. Add tool filter caching with context-hash-based keys
+17. Add VRAM budget check on startup for filter + main model
+18. Add settings schema entries for `toolFiltering` config
+
+### Phase 6: Testing
+
+19. Unit tests for `LocalModelService`
+20. Unit tests for content generator creation with local backends
+21. Integration tests for local backend connectivity
+22. Unit tests for `ToolFilter` service
+23. Documentation updates
 
 ---
 
-## 10. Files to Modify
+## 11. Files to Modify
 
 | File                                               | Change                                                   |
 | -------------------------------------------------- | -------------------------------------------------------- |
@@ -1546,8 +1778,9 @@ Warning: Model 'gemma4:26b' not found locally.
 | `packages/core/src/config/defaultModelConfigs.ts`  | Model definitions, configs, resolutions                  |
 | `packages/core/src/config/config.ts`               | Model resolution for local backends                      |
 | `packages/core/src/services/modelConfigService.ts` | May need updates for custom tier resolution              |
+| `packages/core/src/tools/tool-registry.ts`         | Integrate ToolFilter into getFunctionDeclarations()      |
 | `packages/cli/src/config/auth.ts`                  | Auth validation for local backends                       |
-| `packages/cli/src/config/settingsSchema.ts`        | Settings schema for local backend config                 |
+| `packages/cli/src/config/settingsSchema.ts`        | Settings schema for local backend + toolFiltering config |
 | `packages/cli/src/config/settings.ts`              | Settings handling                                        |
 | `packages/cli/src/validateNonInterActiveAuth.ts`   | Non-interactive auth validation                          |
 | `packages/cli/src/gemini.tsx`                      | CLI flags for local backend                              |
@@ -1560,36 +1793,45 @@ Warning: Model 'gemma4:26b' not found locally.
 | ------------------------------------------------------ | ----------------------------------- |
 | `packages/core/src/services/localModelService.ts`      | Model name resolution per backend   |
 | `packages/core/src/services/localModelService.test.ts` | Tests                               |
+| `packages/core/src/services/toolFilter.ts`             | FunctionGemma tool relevance router |
+| `packages/core/src/services/toolFilter.test.ts`        | Tests for tool filtering            |
 | `packages/core/src/utils/localAuthProvider.ts`         | Local backend auth/config utilities |
 | `docs/cli/local-gemma-4.md`                            | User documentation                  |
 
 ---
 
-## 11. Dependencies
+## 12. Dependencies
 
 No new npm dependencies required. The existing `@google/genai` SDK supports
 custom `baseUrl` + `apiKey` for OpenAI-compatible endpoints. All five local
 backends expose OpenAI-compatible `/v1` endpoints.
 
----
-
-## 12. Risks & Mitigations
-
-| Risk                             | Mitigation                                               |
-| -------------------------------- | -------------------------------------------------------- |
-| Backend API differences          | All five use OpenAI-compatible format; test against each |
-| Gemma 4 GGUF availability        | Verify model availability before release                 |
-| Performance vs cloud models      | Document expected performance differences                |
-| Breaking changes in backend APIs | Pin default behavior, allow custom base URLs             |
+Tool filtering requires **Ollama** backend (`functiongemma:270m` model, 301MB).
+No additional SDK dependencies — Ollama's REST API is called directly via
+`fetch`.
 
 ---
 
-## 13. References
+## 13. Risks & Mitigations
+
+| Risk                                   | Mitigation                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Backend API differences                | All five use OpenAI-compatible format; test against each                                              |
+| Gemma 4 GGUF availability              | Verify model availability before release                                                              |
+| Performance vs cloud models            | Document expected performance differences                                                             |
+| Breaking changes in backend APIs       | Pin default behavior, allow custom base URLs                                                          |
+| ToolFilter false positives             | Fall back to all-tools on tool-call failures; cache invalidation on pattern change                    |
+| ToolFilter adds latency                | Async pre-fetch + 30s cache TTL; default disabled, user opt-in                                        |
+| ToolFilter VRAM overhead on tight GPUs | VRAM budget check on startup; auto-disable when insufficient; user can force-off via `enabled: false` |
+
+---
+
+## 14. References
 
 - [Upstream Gemma 4 branch](https://github.com/google-gemini/gemini-cli/tree/feat/add-gemma-4-31b-it-support)
 - [Ollama OpenAI-compatible API](https://github.com/ollama/ollama/blob/main/docs/openai.md)
 - [LM Studio Developer Mode](https://lmstudio.ai/docs/api)
 - [Llama.cpp Server](https://github.com/ggml-ai/llama.cpp/tree/master/examples/server)
 - [Gemma 4 on HuggingFace](https://huggingface.co/google/gemma-4-26b-a4b-it)
--
+- [FunctionGemma on Ollama](https://ollama.com/library/functiongemma)
 - _Built for the Gemini CLI open-source community_
