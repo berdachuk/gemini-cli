@@ -21,6 +21,7 @@ import {
   PREVIEW_GEMINI_FLASH_MODEL,
   PREVIEW_GEMINI_3_1_FLASH_LITE_MODEL,
   AuthType,
+  GEMMA_MODEL_ALIAS_4,
 } from '@google/gemini-cli-core';
 import type { Config, ModelSlashCommandEvent } from '@google/gemini-cli-core';
 
@@ -55,6 +56,7 @@ describe('<ModelDialog />', () => {
   const mockGetGemini31FlashLiteLaunchedSync = vi.fn();
   const mockGetProModelNoAccess = vi.fn();
   const mockGetProModelNoAccessSync = vi.fn();
+  const mockRefreshAuth = vi.fn();
 
   interface MockConfig extends Partial<Config> {
     setModel: (model: string, isTemporary?: boolean) => void;
@@ -66,6 +68,7 @@ describe('<ModelDialog />', () => {
     getProModelNoAccess: () => Promise<boolean>;
     getProModelNoAccessSync: () => boolean;
     getExperimentalGemma: () => boolean;
+    refreshAuth: (...args: unknown[]) => Promise<void>;
     getLastRetrievedQuota: () =>
       | {
           buckets: Array<{
@@ -87,6 +90,7 @@ describe('<ModelDialog />', () => {
     getProModelNoAccess: mockGetProModelNoAccess,
     getProModelNoAccessSync: mockGetProModelNoAccessSync,
     getExperimentalGemma: () => false,
+    refreshAuth: mockRefreshAuth,
     getLastRetrievedQuota: () => ({ buckets: [] }),
     getSessionId: () => 'test-session-id',
   };
@@ -99,6 +103,7 @@ describe('<ModelDialog />', () => {
     mockGetGemini31FlashLiteLaunchedSync.mockReturnValue(false);
     mockGetProModelNoAccess.mockResolvedValue(false);
     mockGetProModelNoAccessSync.mockReturnValue(false);
+    mockRefreshAuth.mockResolvedValue(undefined);
 
     // Default implementation for getDisplayString
     mockGetDisplayString.mockImplementation((val: string) => {
@@ -111,6 +116,7 @@ describe('<ModelDialog />', () => {
   const renderComponent = async (
     configValue = mockConfig as Config,
     authType = AuthType.LOGIN_WITH_GOOGLE,
+    settingsOverrides: Record<string, unknown> = {},
   ) => {
     const settings = createMockSettings({
       security: {
@@ -118,6 +124,7 @@ describe('<ModelDialog />', () => {
           selectedType: authType,
         },
       },
+      ...settingsOverrides,
     });
 
     const result = await renderWithProviders(
@@ -239,6 +246,23 @@ describe('<ModelDialog />', () => {
       );
       expect(mockOnClose).toHaveBeenCalled();
     });
+    unmount();
+  });
+
+  it('shows local Gemma mode when a local backend auth type is active', async () => {
+    mockGetDisplayString.mockImplementation((val: string) => val);
+    const { lastFrame, unmount } = await renderComponent(
+      mockConfig as Config,
+      AuthType.USE_LOCAL_OLLAMA,
+      {
+        localModel: {
+          baseUrl: 'http://127.0.0.1:11434',
+        },
+      },
+    );
+
+    expect(lastFrame()).toContain(GEMMA_MODEL_ALIAS_4);
+    expect(lastFrame()).toContain('Manual');
     unmount();
   });
 

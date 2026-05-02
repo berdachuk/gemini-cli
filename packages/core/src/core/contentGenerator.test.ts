@@ -10,6 +10,8 @@ import {
   AuthType,
   createContentGeneratorConfig,
   type ContentGenerator,
+  getAuthTypeFromEnv,
+  resolveLocalBackendBaseUrl,
 } from './contentGenerator.js';
 import { createCodeAssistContentGenerator } from '../code_assist/codeAssist.js';
 import { GoogleGenAI } from '@google/genai';
@@ -155,6 +157,42 @@ describe('createContentGenerator', () => {
           'User-Agent': expect.stringMatching(
             /GeminiCLI\/1\.2\.3\/gemini-pro \(.*; .*; terminal\)/,
           ),
+        }),
+      }),
+    });
+    expect(generator).toEqual(
+      new LoggingContentGenerator(mockGenerator.models, mockConfig),
+    );
+  });
+
+  it('should create a local GoogleGenAI content generator', async () => {
+    const mockConfig = {
+      getModel: vi.fn().mockReturnValue('gemma4:26b'),
+      getProxy: vi.fn().mockReturnValue(undefined),
+      getUsageStatisticsEnabled: () => false,
+      getClientName: vi.fn().mockReturnValue(undefined),
+    } as unknown as Config;
+
+    const mockGenerator = {
+      models: {},
+    } as unknown as GoogleGenAI;
+    vi.mocked(GoogleGenAI).mockImplementation(() => mockGenerator as never);
+
+    const generator = await createContentGenerator(
+      {
+        authType: AuthType.USE_LOCAL_OLLAMA,
+        baseUrl: 'http://localhost:11434/v1',
+      },
+      mockConfig,
+    );
+
+    expect(GoogleGenAI).toHaveBeenCalledWith({
+      apiKey: undefined,
+      vertexai: false,
+      httpOptions: expect.objectContaining({
+        baseUrl: 'http://localhost:11434/v1',
+        headers: expect.objectContaining({
+          'User-Agent': expect.any(String),
         }),
       }),
     });
@@ -974,5 +1012,44 @@ describe('createContentGeneratorConfig', () => {
     );
     expect(config.apiKey).toBe('gateway-placeholder-key');
     expect(config.vertexai).toBe(false);
+  });
+
+  it('should configure for local backends using normalized baseUrl', async () => {
+    vi.stubEnv('OLLAMA_HOST', 'http://localhost:11434');
+    const config = await createContentGeneratorConfig(
+      mockConfig,
+      AuthType.USE_LOCAL_OLLAMA,
+    );
+    expect(config.vertexai).toBe(false);
+    expect(config.baseUrl).toBe('http://localhost:11434/v1');
+  });
+
+  it('allows configured per-provider local backend defaults to override built-in URLs', () => {
+    vi.stubEnv('OLLAMA_HOST', undefined as unknown as string);
+    const baseUrl = resolveLocalBackendBaseUrl(
+      AuthType.USE_LOCAL_OLLAMA,
+      undefined,
+      'http://ollama.internal:21434',
+    );
+
+    expect(baseUrl).toBe('http://ollama.internal:21434/v1');
+  });
+});
+
+describe('getAuthTypeFromEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('prefers explicit local backend env over GEMINI_API_KEY', () => {
+    vi.stubEnv('GEMINI_LOCAL_BACKEND', 'ollama');
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    expect(getAuthTypeFromEnv()).toBe(AuthType.USE_LOCAL_OLLAMA);
+  });
+
+  it('detects local backend env hints when explicit backend is not set', () => {
+    vi.stubEnv('GEMINI_API_KEY', undefined as unknown as string);
+    vi.stubEnv('OLLAMA_HOST', 'http://localhost:11434');
+    expect(getAuthTypeFromEnv()).toBe(AuthType.USE_LOCAL_OLLAMA);
   });
 });

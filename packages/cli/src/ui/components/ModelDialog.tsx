@@ -21,13 +21,22 @@ import {
   DEFAULT_GEMINI_MODEL_AUTO,
   GEMMA_4_31B_IT_MODEL,
   GEMMA_4_26B_A4B_IT_MODEL,
+  GEMMA_MODEL_ALIAS_4,
+  GEMMA_MODEL_ALIAS_4_26B,
+  GEMMA_MODEL_ALIAS_4_31B,
+  GEMMA_MODEL_ALIAS_4_31B_CLOUD,
+  GEMMA_MODEL_ALIAS_4_E2B,
+  GEMMA_MODEL_ALIAS_4_E4B,
   ModelSlashCommandEvent,
   logModelSlashCommand,
   getDisplayString,
   AuthType,
   PREVIEW_GEMINI_3_1_CUSTOM_TOOLS_MODEL,
   isProModel,
+  isLocalBackendAuthType,
+  LocalModelDiscoveryService,
 } from '@google/gemini-cli-core';
+import type { DiscoveredLocalBackend } from '@google/gemini-cli-core';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { theme } from '../semantic-colors.js';
 import { DescriptiveRadioButtonSelect } from './shared/DescriptiveRadioButtonSelect.js';
@@ -49,6 +58,13 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
     config?.getProModelNoAccessSync() ? 'manual' : 'main',
   );
   const [persistMode, setPersistMode] = useState(false);
+  const [discoveredBackends, setDiscoveredBackends] = useState<
+    DiscoveredLocalBackend[]
+  >([]);
+  const [discoveryReady, setDiscoveryReady] = useState(false);
+
+  const selectedAuthType = settings.merged.security.auth.selectedType;
+  const isLocalModelMode = isLocalBackendAuthType(selectedAuthType);
 
   useEffect(() => {
     async function checkAccess() {
@@ -62,6 +78,15 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
     void checkAccess();
   }, [config]);
 
+  useEffect(() => {
+    if (!isLocalModelMode || discoveryReady) return;
+    setDiscoveryReady(true);
+    const service = new LocalModelDiscoveryService();
+    void service.discoverBackends().then((result) => {
+      setDiscoveredBackends(result.backends);
+    });
+  }, [isLocalModelMode, discoveryReady]);
+
   // Determine the Preferred Model (read once when the dialog opens).
   const preferredModel = config?.getModel() || DEFAULT_GEMINI_MODEL_AUTO;
 
@@ -69,11 +94,14 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
   const useGemini31 = config?.getGemini31LaunchedSync?.() ?? false;
   const useGemini31FlashLite =
     config?.getGemini31FlashLiteLaunchedSync?.() ?? false;
-  const selectedAuthType = settings.merged.security.auth.selectedType;
   const useCustomToolModel =
     useGemini31 && selectedAuthType === AuthType.USE_GEMINI;
 
   const manualModelSelected = useMemo(() => {
+    if (isLocalModelMode) {
+      return preferredModel;
+    }
+
     if (
       config?.getExperimentalDynamicModelConfiguration?.() === true &&
       config.getModelConfigService
@@ -101,7 +129,7 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
       return preferredModel;
     }
     return '';
-  }, [preferredModel, config]);
+  }, [preferredModel, config, isLocalModelMode]);
 
   useKeypress(
     (key) => {
@@ -123,6 +151,26 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
   );
 
   const mainOptions = useMemo(() => {
+    if (isLocalModelMode) {
+      return [
+        {
+          value: GEMMA_MODEL_ALIAS_4,
+          title: getDisplayString(GEMMA_MODEL_ALIAS_4, config ?? undefined),
+          description:
+            'Use the preferred local Gemma 4 model for the active backend',
+          key: GEMMA_MODEL_ALIAS_4,
+        },
+        {
+          value: 'Manual',
+          title: manualModelSelected
+            ? `Manual (${getDisplayString(manualModelSelected, config ?? undefined)})`
+            : 'Manual',
+          description: 'Manually select a local Gemma 4 variant',
+          key: 'Manual',
+        },
+      ];
+    }
+
     // --- DYNAMIC PATH ---
     if (
       config?.getExperimentalDynamicModelConfiguration?.() === true &&
@@ -196,6 +244,7 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
     useGemini31FlashLite,
     useCustomToolModel,
     hasAccessToProModel,
+    isLocalModelMode,
   ]);
 
   const manualOptions = useMemo(() => {
@@ -221,6 +270,95 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
           title: o.name,
           key: o.modelId,
         }));
+    }
+
+    if (isLocalModelMode) {
+      if (!discoveryReady) {
+        return [
+          {
+            value: '',
+            title: 'Probing local backends...',
+            key: 'probing',
+            disabled: true,
+          },
+        ];
+      }
+      if (discoveredBackends.length === 0) {
+        return [
+          {
+            value: GEMMA_MODEL_ALIAS_4,
+            title: getDisplayString(GEMMA_MODEL_ALIAS_4, config ?? undefined),
+            key: GEMMA_MODEL_ALIAS_4,
+          },
+          {
+            value: GEMMA_MODEL_ALIAS_4_26B,
+            title: getDisplayString(
+              GEMMA_MODEL_ALIAS_4_26B,
+              config ?? undefined,
+            ),
+            key: GEMMA_MODEL_ALIAS_4_26B,
+          },
+          {
+            value: GEMMA_MODEL_ALIAS_4_31B,
+            title: getDisplayString(
+              GEMMA_MODEL_ALIAS_4_31B,
+              config ?? undefined,
+            ),
+            key: GEMMA_MODEL_ALIAS_4_31B,
+          },
+          {
+            value: GEMMA_MODEL_ALIAS_4_31B_CLOUD,
+            title: getDisplayString(
+              GEMMA_MODEL_ALIAS_4_31B_CLOUD,
+              config ?? undefined,
+            ),
+            key: GEMMA_MODEL_ALIAS_4_31B_CLOUD,
+          },
+          {
+            value: GEMMA_MODEL_ALIAS_4_E4B,
+            title: getDisplayString(
+              GEMMA_MODEL_ALIAS_4_E4B,
+              config ?? undefined,
+            ),
+            key: GEMMA_MODEL_ALIAS_4_E4B,
+          },
+          {
+            value: GEMMA_MODEL_ALIAS_4_E2B,
+            title: getDisplayString(
+              GEMMA_MODEL_ALIAS_4_E2B,
+              config ?? undefined,
+            ),
+            key: GEMMA_MODEL_ALIAS_4_E2B,
+          },
+        ];
+      }
+      const options: Array<{
+        value: string;
+        title: string;
+        key: string;
+        description?: string;
+        disabled?: boolean;
+      }> = [];
+      const BACKEND_DISPLAY: Record<string, string> = {
+        ollama: 'Ollama',
+        'lm-studio': 'LM Studio',
+        'llama-cpp': 'Llama.cpp',
+        vllm: 'vLLM',
+        sglang: 'SGLang',
+      };
+      for (const backend of discoveredBackends) {
+        const label = BACKEND_DISPLAY[backend.backend] || backend.backend;
+        for (const model of backend.gemma4Models) {
+          const displayName = getDisplayString(model.id, config ?? undefined);
+          options.push({
+            value: model.id,
+            title: displayName,
+            description: `Provider: ${label} ● running`,
+            key: `${backend.backend}:${model.id}`,
+          });
+        }
+      }
+      return options;
     }
 
     // --- LEGACY PATH ---
@@ -305,6 +443,9 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
     useCustomToolModel,
     hasAccessToProModel,
     config,
+    isLocalModelMode,
+    discoveredBackends,
+    discoveryReady,
   ]);
 
   const options = view === 'main' ? mainOptions : manualOptions;
@@ -324,7 +465,7 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
 
   // Handle selection internally (Autonomous Dialog).
   const handleSelect = useCallback(
-    (model: string) => {
+    async (model: string) => {
       if (model === 'Manual') {
         setView('manual');
         return;
@@ -332,12 +473,19 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
 
       if (config) {
         config.setModel(model, persistMode ? false : true);
+        if (selectedAuthType && isLocalBackendAuthType(selectedAuthType)) {
+          await config.refreshAuth(
+            selectedAuthType,
+            undefined,
+            settings.merged.localModel?.baseUrl,
+          );
+        }
         const event = new ModelSlashCommandEvent(model);
         logModelSlashCommand(config, event);
       }
       onClose();
     },
-    [config, onClose, persistMode],
+    [config, onClose, persistMode, selectedAuthType, settings],
   );
 
   return (

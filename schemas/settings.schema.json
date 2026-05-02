@@ -706,6 +706,149 @@
       },
       "additionalProperties": false
     },
+    "localModel": {
+      "title": "Local Model",
+      "description": "Settings for local OpenAI-compatible model backends.",
+      "markdownDescription": "Settings for local OpenAI-compatible model backends.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+      "default": {},
+      "type": "object",
+      "properties": {
+        "backend": {
+          "title": "Local Backend",
+          "description": "Local inference backend to use for Gemma 4 aliases.",
+          "markdownDescription": "Local inference backend to use for Gemma 4 aliases.\n\n- Category: `Model`\n- Requires restart: `yes`",
+          "type": "string",
+          "enum": ["ollama", "lm-studio", "llama-cpp", "vllm", "sglang"]
+        },
+        "baseUrl": {
+          "title": "Local Backend Base URL",
+          "description": "Override the local backend API base URL.",
+          "markdownDescription": "Override the local backend API base URL.\n\n- Category: `Model`\n- Requires restart: `yes`",
+          "type": "string"
+        },
+        "providers": {
+          "title": "Local Backend Providers",
+          "description": "Optional per-provider defaults for local backend API endpoints.",
+          "markdownDescription": "Optional per-provider defaults for local backend API endpoints.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+          "default": {},
+          "type": "object",
+          "properties": {
+            "ollama": {
+              "title": "Ollama",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+              "default": {},
+              "type": "object",
+              "properties": {
+                "baseUrl": {
+                  "title": "Ollama Base URL",
+                  "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "lm-studio": {
+              "title": "LM Studio",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+              "default": {},
+              "type": "object",
+              "properties": {
+                "baseUrl": {
+                  "title": "LM Studio Base URL",
+                  "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "llama-cpp": {
+              "title": "Llama.cpp",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+              "default": {},
+              "type": "object",
+              "properties": {
+                "baseUrl": {
+                  "title": "Llama.cpp Base URL",
+                  "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "vllm": {
+              "title": "vLLM",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+              "default": {},
+              "type": "object",
+              "properties": {
+                "baseUrl": {
+                  "title": "vLLM Base URL",
+                  "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "sglang": {
+              "title": "SGLang",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+              "default": {},
+              "type": "object",
+              "properties": {
+                "baseUrl": {
+                  "title": "SGLang Base URL",
+                  "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "modelMapping": {
+          "title": "Local Model Mapping",
+          "description": "Optional alias-to-model mappings for discovered local Gemma 4 models.",
+          "markdownDescription": "Optional alias-to-model mappings for discovered local Gemma 4 models.\n\n- Category: `Model`\n- Requires restart: `yes`\n- Default: `{}`",
+          "default": {},
+          "type": "object",
+          "properties": {
+            "gemma4": {
+              "title": "gemma4",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+              "type": "string"
+            },
+            "gemma4-26b": {
+              "title": "gemma4-26b",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+              "type": "string"
+            },
+            "gemma4-31b": {
+              "title": "gemma4-31b",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+              "type": "string"
+            },
+            "gemma4-31b-cloud": {
+              "title": "gemma4-31b-cloud",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+              "type": "string"
+            },
+            "gemma4-e4b": {
+              "title": "gemma4-e4b",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+              "type": "string"
+            },
+            "gemma4-e2b": {
+              "title": "gemma4-e2b",
+              "markdownDescription": "Description not provided.\n\n- Category: `Model`\n- Requires restart: `yes`",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "modelConfigs": {
       "title": "Model Configs",
       "description": "Model configurations.",

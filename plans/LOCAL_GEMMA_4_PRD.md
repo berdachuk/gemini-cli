@@ -113,10 +113,18 @@ Model IDs are **never hardcoded** — instead, the system:
 **Gemma 4 family — 29 models on Ollama (verified against
 ollama.com/library/gemma4/tags):**
 
-**Base alias → defaults (what user gets with `gemini -m gemma4`):** | Alias |
-Ollama Tag | Type | Params | Size | Context | Modality | | --- | --- | --- | ---
-| --- | --- | --- | | `gemma4` | `gemma4:latest` (= `e4b`) | Edge dense | 4.5B
-eff / 8B total | 9.6 GB | 128K | Text, Image |
+Two distinct names matter here and should not be conflated:
+
+- **CLI alias**: `gemma4` means "best discovered Gemma 4 default" and should
+  resolve to `gemma4-26b` when a 26B-class model is available.
+- **Backend-native model ID**: some backends also expose a raw ID named `gemma4`
+  or `gemma4:latest`; on Ollama today that points to `gemma4:e4b`.
+
+**Example backend-native mapping on Ollama:**
+
+| CLI alias | Preferred discovered ID                                   | Raw Ollama convenience tag     | Type                     | Context   | Modality    |
+| --------- | --------------------------------------------------------- | ------------------------------ | ------------------------ | --------- | ----------- |
+| `gemma4`  | `gemma4:26b` when available, else best available fallback | `gemma4:latest` = `gemma4:e4b` | Varies by resolved model | 128K-256K | Text, Image |
 
 **Complete tag inventory (29 models across 4 base variants × multiple
 quantizations):**
@@ -278,10 +286,12 @@ createContentGenerator() {
 }
 ```
 
-**Implementation approach**: All five local backends expose OpenAI-compatible
-`/v1/chat/completions` endpoints. A single
-`new GoogleGenAI({ apiKey: 'not-needed', vertexai: false, httpOptions: { baseUrl } })`
-works across all five.
+**Implementation approach**: treat all five local backends as custom-base-URL
+providers reachable through the same local-backend branch in
+`createContentGenerator()`. The PRD intentionally reuses the existing
+`GoogleGenAI` client shape with a backend-specific `baseUrl`, but the exact
+wrapper class should match the implementation patterns already present in
+`contentGenerator.ts`.
 
 In `createContentGenerator()` at `contentGenerator.ts:282-347`, add a new block
 for local auth types **before** the `throw` on line 345:
@@ -291,28 +301,29 @@ for local auth types **before** the `throw` on line 345:
 
 // Local inference backends (OpenAI-compatible)
 if (
-  contentGeneratorConfig.authType === AuthType.USE_LOCAL_OLLAMA ||
-  contentGeneratorConfig.authType === AuthType.USE_LOCAL_LM_STUDIO ||
-  contentGeneratorConfig.authType === AuthType.USE_LOCAL_LLAMA_CPP ||
-  contentGeneratorConfig.authType === AuthType.USE_LOCAL_VLLM ||
-  contentGeneratorConfig.authType === AuthType.USE_LOCAL_SGLANG
+  config.authType === AuthType.USE_LOCAL_OLLAMA ||
+  config.authType === AuthType.USE_LOCAL_LM_STUDIO ||
+  config.authType === AuthType.USE_LOCAL_LLAMA_CPP ||
+  config.authType === AuthType.USE_LOCAL_VLLM ||
+  config.authType === AuthType.USE_LOCAL_SGLANG
 ) {
-  checkContentGeneratorConfig(contentGeneratorConfig);
-  const generator = new GoogleGenAI({
+  let headers: Record<string, string> = { ...baseHeaders };
+  if (config.customHeaders) {
+    headers = { ...headers, ...config.customHeaders };
+  }
+
+  const googleGenAI = new GoogleGenAI({
     apiKey: 'not-needed',
     vertexai: false,
-    httpOptions: { baseUrl: contentGeneratorConfig.baseUrl! },
+    httpOptions: {
+      baseUrl: config.baseUrl!,
+      headers,
+    },
   });
-  const localModel = config.getModel();
-  return new UserTierIdpContentGenerator(
-    generator.models,
-    localModel,
-    contentGeneratorConfig,
-  );
+  return new LoggingContentGenerator(googleGenAI.models, gcConfig);
 }
 
-// Existing throw for unsupported auth types:
-throw new Error(`Unsupported authType: ${contentGeneratorConfig.authType}`);
+// Existing throw for unsupported auth types remains below.
 ```
 
 Similarly, `createContentGeneratorConfig()` at `contentGenerator.ts:125-186`
@@ -323,20 +334,20 @@ needs a new block before the fallthrough at line 185:
 
 // Local inference backends
 if (
-  config.authType === AuthType.USE_LOCAL_OLLAMA ||
-  config.authType === AuthType.USE_LOCAL_LM_STUDIO ||
-  config.authType === AuthType.USE_LOCAL_LLAMA_CPP ||
-  config.authType === AuthType.USE_LOCAL_VLLM ||
-  config.authType === AuthType.USE_LOCAL_SGLANG
+  authType === AuthType.USE_LOCAL_OLLAMA ||
+  authType === AuthType.USE_LOCAL_LM_STUDIO ||
+  authType === AuthType.USE_LOCAL_LLAMA_CPP ||
+  authType === AuthType.USE_LOCAL_VLLM ||
+  authType === AuthType.USE_LOCAL_SGLANG
 ) {
   return {
     ...contentGeneratorConfig,
-    authType: config.authType,
-    baseUrl: localModelService.getApiBase(config.authType),
+    authType,
+    baseUrl: resolveLocalBackendBaseUrl(authType, config),
   };
 }
 
-return contentGeneratorConfig; // line 185 — existing fallthrough
+return contentGeneratorConfig; // existing fallthrough
 ```
 
 ### 3.4 Auth Validation
@@ -357,7 +368,7 @@ case 'local-sglang':
 Update `packages/cli/src/config/settingsSchema.ts` to add local backend
 configuration:
 
-````typescript
+```typescript
 localModel: {
   type: 'object',
   label: 'Local Model',
@@ -385,25 +396,27 @@ localModel: {
     },
   },
 },
+```
 
 ### 3.6 Existing Gemma Model Router (Coexistence)
 
-The codebase already has `experimental.gemmaModelRouter` (`settingsSchema.ts:2310-2380`)
-— a LiteRT-LM based local Gemma inference path using a Gemini API shim. This
-PRD's approach is architecturally different and independent:
+The codebase already has `experimental.gemmaModelRouter`
+(`settingsSchema.ts:2310-2380`) — a LiteRT-LM based local Gemma inference path
+using a Gemini API shim. This PRD's approach is architecturally different and
+independent:
 
-| Feature | Existing Router (LiteRT-LM) | This PRD (OpenAI API) |
-| --- | --- | --- |
-| **Protocol** | Gemini API shim | OpenAI-compatible `/v1` |
-| **Backends** | LiteRT-LM only | Ollama, LM Studio, Llama.cpp, vLLM, SGLang |
-| **Model Discovery** | Pre-configured classifier | Dynamic `GET /v1/models` |
-| **Tool Use** | Not supported | Supported (native function calling) |
-| **Audience** | Experimental LiteRT users | General local LLM community |
+| Feature             | Existing Router (LiteRT-LM) | This PRD (OpenAI API)                      |
+| ------------------- | --------------------------- | ------------------------------------------ |
+| **Protocol**        | Gemini API shim             | OpenAI-compatible `/v1`                    |
+| **Backends**        | LiteRT-LM only              | Ollama, LM Studio, Llama.cpp, vLLM, SGLang |
+| **Model Discovery** | Pre-configured classifier   | Dynamic `GET /v1/models`                   |
+| **Tool Use**        | Not supported               | Supported (native function calling)        |
+| **Audience**        | Experimental LiteRT users   | General local LLM community                |
 
 The two paths coexist without conflict. Users choose one by toggling
-`experimental.gemmaModelRouter.enabled` (LiteRT) or setting
-`localModel.backend` (this PRD). Future versions may merge both under a unified
-local backend abstraction, but that is outside this PRD's scope.
+`experimental.gemmaModelRouter.enabled` (LiteRT) or setting `localModel.backend`
+(this PRD). Future versions may merge both under a unified local backend
+abstraction, but that is outside this PRD's scope.
 
 ---
 
@@ -458,7 +471,7 @@ Add to `packages/core/src/config/defaultModelConfigs.ts` under
   isVisible: true,
   features: { thinking: true, multimodalToolUse: false },
 },
-````
+```
 
 ### 4.2 Model Configs (Same Generation Config, Model Field Is Placeholder)
 
@@ -546,9 +559,9 @@ User runs: gemini -m gemma4 --local-backend ollama
 1. Config detects authType = USE_LOCAL_OLLAMA
 2. LocalModelService.discoverModels('ollama')
      → GET http://localhost:11434/v1/models
-     → Response: { data: [ { id: "gemma4:14b" }, { id: "gemma4:26b" }, { id: "gemma4:31b" } ] }
+     → Response: { data: [ { id: "gemma4:e4b" }, { id: "gemma4:26b" }, { id: "gemma4:31b" } ] }
 3. Filter to Gemma 4 models: ["gemma4:e2b", "gemma4:e4b", "gemma4:26b", "gemma4:31b"]
-4. resolveModel("gemma4") → "gemma4:26b" (largest non-cloud Gemma 4 model preferred)
+4. resolveModel("gemma4") → "gemma4:26b" (preferred non-cloud workstation default when available)
 5. createContentGeneratorConfig() → baseUrl = "http://localhost:11434/v1", model = "gemma4:26b"
 ```
 
@@ -605,8 +618,11 @@ are for the Google Gemini API (cloud), not local inference. Local aliases use
 }
 ```
 
-**Available Gemma 4 models in LM Studio:** | Discovered ID | Maps to Alias | |
---- | --- | | `google/gemma-4-26b-a4b` | `gemma4`, `gemma4:26b` |
+**Available Gemma 4 models in LM Studio:**
+
+| Discovered ID            | Maps to CLI alias      |
+| ------------------------ | ---------------------- |
+| `google/gemma-4-26b-a4b` | `gemma4`, `gemma4-26b` |
 
 Note: LM Studio currently only has the 26B MoE variant loaded. Other Gemma 4
 variants can be downloaded via LM Studio's model browser (search "gemma-4" on
@@ -626,14 +642,20 @@ HuggingFace).
 }
 ```
 
-**Available Gemma 4 models in Ollama (locally pulled):** | Discovered ID | Maps
-to Alias | Type | | --- | --- | --- | | `gemma4:26b` | `gemma4`, `gemma4:26b` |
-MoE 25.2B / 3.8B active | | `gemma4:e4b` | `gemma4:e4b` | Dense 4.5B eff / 8B
-total | | `gemma4:31b-cloud` | `gemma4:31b-cloud` | Dense 30.7B (cloud) |
+**Available Gemma 4 models in Ollama (locally pulled):**
 
-**Not yet pulled locally but available in Ollama library:** | Model | Type | |
---- | --- | | `gemma4:e2b` | Dense 2.3B eff / 5.1B total (pulling in background
-now) | | `gemma4:31b` | Dense 30.7B local (not cloud) |
+| Discovered ID      | Maps to CLI alias      | Type                      |
+| ------------------ | ---------------------- | ------------------------- |
+| `gemma4:26b`       | `gemma4`, `gemma4-26b` | MoE 25.2B / 3.8B active   |
+| `gemma4:e4b`       | `gemma4-e4b`           | Dense 4.5B eff / 8B total |
+| `gemma4:31b-cloud` | `gemma4-31b-cloud`     | Dense 30.7B (cloud)       |
+
+**Not yet pulled locally but available in Ollama library:**
+
+| Model        | Type                          |
+| ------------ | ----------------------------- |
+| `gemma4:e2b` | Dense 2.3B eff / 5.1B total   |
+| `gemma4:31b` | Dense 30.7B local (not cloud) |
 
 ### 5.3 Llama.cpp (http://localhost:8080)
 
@@ -1114,20 +1136,20 @@ function verifyAvailableContext(meta: LocalModelMetadata, advertised: number): n
 
 ### 5.8 Impact on Gemini CLI Behavior
 
-| Metadata Field                            | Affected CLI Behavior                                                                                                                                                |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------- | ---------------- |
-| `contextLength` / `verifiedContext`       | Sets `maxContextTokens` — controls when compression runs, token calculation upper bound                                                                              |
-| `supportsVision`                          | Enables/disables image file upload and multimodal prompt handling in InputPrompt UI                                                                                  |
-| `thinkingConfig.nativeThinking`           | If true: enables `/thinking` toggle using native `<                                                                                                                  | think | >` system prompt token (all Gemma 4 models). If false: thinking disabled entirely                        |
-| `thinkingConfig.implementation`           | Always `native-token` for Gemma 4 — `<                                                                                                                               | think | >`token in system prompt enables thinking. Output format:`<channel>thought\n[Internal reasoning]<channel | >[Final answer]` |
-| `thinkingConfig.maxThinkingTokens`        | Sets thinking budget in model config. For Gemma 4 native-token: ~15% of verified context (max 16,384 tokens)                                                         |
-| `thinkingConfig.visibleReasoningInOutput` | Always true for Gemma 4 — thought blocks are always visible in output (no hidden reasoning API). gemini-cli must strip thought blocks from history per best practice |
-| `supportsToolUse`                         | Controls whether tool declarations are sent to the model; disabled models get text-only mode                                                                         |
-| `profile` (paramSize)                     | Affects tool parallelism, timeout values, polling intervals for long-running ops                                                                                     |
-| `quantization`                            | Displayed in UI; may affect accuracy warnings (e.g., Q4 vs BF16)                                                                                                     |
-| `isMoE`                                   | Affects batch size recommendations and parallelism hints                                                                                                             |
-| `isLoaded` (LM Studio)                    | Shows load/unload state in UI; prompts user to load model before use                                                                                                 |
-| `architecture`                            | Used for prompt template selection, tokenizer compatibility checks                                                                                                   |
+| Metadata Field                            | Affected CLI Behavior                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----- | ----------------------------------------------------- |
+| `contextLength` / `verifiedContext`       | Sets `maxContextTokens` and controls when compression runs.                                                |
+| `supportsVision`                          | Enables or disables image upload and multimodal prompt handling.                                           |
+| `thinkingConfig.nativeThinking`           | If true, enables `/thinking` using the native `<                                                           | think | >` system prompt token; otherwise thinking stays off. |
+| `thinkingConfig.implementation`           | For Gemma 4 this is always `native-token`; `gemini-cli` must inject `<                                     | think | >` when thinking is enabled.                          |
+| `thinkingConfig.maxThinkingTokens`        | Sets the thinking budget, roughly 15% of verified context up to 16,384 tokens.                             |
+| `thinkingConfig.visibleReasoningInOutput` | Signals that thought blocks may appear in output and should be stripped from history before the next turn. |
+| `supportsToolUse`                         | Controls whether tool declarations are sent to the model or text-only mode is used.                        |
+| `profile` (paramSize)                     | Affects parallelism, timeout values, and polling intervals for long-running operations.                    |
+| `quantization`                            | Displayed in UI and may drive accuracy or memory warnings.                                                 |
+| `moe` / dense architecture                | Affects batching guidance and performance hints.                                                           |
+| `isLoaded` (LM Studio)                    | Shows load state in UI and can prompt the user to load a model before use.                                 |
+| `architecture`                            | Used for prompt-template selection and tokenizer-compatibility checks.                                     |
 
 ### 5.9 Discovery Service API
 
@@ -1273,14 +1295,16 @@ function resolveModelAliasToDiscoveredId(
 
 ### 6.3 Per-Backend Model Format Differences
 
-All five backends return the same JSON schema but with different model ID
-formats:
+All five backends expose an OpenAI-compatible `/v1/models` shape, but their
+model IDs vary by backend:
 
-| Backend   | Model ID format | Example                                        |
-| --------- | --------------- | ---------------------------------------------- |
-| Ollama    | `{name}:{tag}`  | `gemma4:26b`, `gemma4:31b-cloud`, `gemma4:e4b` |
-| LM Studio | `{org}/{name}`  | `google/gemma-4-26b-a4b`                       |
-| Llama.cpp | `{filename}`    | `gemma-4-26b-a4b-it.gguf`                      |
+| Backend   | Model ID format                           | Example                                        |
+| --------- | ----------------------------------------- | ---------------------------------------------- |
+| Ollama    | `{name}:{tag}`                            | `gemma4:26b`, `gemma4:31b-cloud`, `gemma4:e4b` |
+| LM Studio | `{org}/{name}`                            | `google/gemma-4-26b-a4b`                       |
+| Llama.cpp | `{filename}`                              | `gemma-4-26b-a4b-it.gguf`                      |
+| vLLM      | model/repo name or configured served name | `google/gemma-4-26b-a4b-it`                    |
+| SGLang    | model/repo name or configured served name | `google/gemma-4-26b-a4b-it`                    |
 
 The `LocalModelService` handles format differences transparently. Only the raw
 model ID matters for discovery.
@@ -1675,48 +1699,365 @@ export class ToolFilter {
 
 ## 10. Implementation Plan
 
-### Phase 1: Core Infrastructure
+### 10.1 Delivery Strategy
 
-1. Add `AuthType` values for local backends (`contentGenerator.ts`)
-2. Add env var detection (`getAuthTypeFromEnv()`)
-3. Create `LocalModelService` for model name resolution
-4. Update `createContentGeneratorConfig()` / `createContentGenerator()` for
-   local backends
+Implement this feature in **three milestones** rather than one large patch:
 
-### Phase 2: Model Configuration
+1. **MVP: single-backend local Gemma 4 execution** Supports explicit local
+   backend selection, alias-to-model resolution, and end-to-end chat/tool
+   execution against a discovered local model.
+2. **Discovery UX: auto-detect, grouped model selection, and settings polish**
+   Adds zero-config startup detection, provider-aware UI, and stronger
+   validation/error handling.
+3. **Optional optimization: FunctionGemma tool filtering** Adds the Ollama-only
+   tool pre-filter after the base local backend path is stable.
 
-5. Add model definitions, configs, aliases, resolutions to
-   `defaultModelConfigs.ts`
-6. Add model constants and update `resolveModel()` in `models.ts`
-7. Update `settingsSchema.ts` for local backend settings
+This sequencing keeps the first shippable version small enough to verify quickly
+while isolating the riskiest optional behavior behind a later milestone.
 
-### Phase 3: Auth & Validation
+### 10.2 Milestone 1 — MVP Local Backend Path
 
-8. Update auth validation in `auth.ts` / `validateNonInterActiveAuth.ts`
-9. Update `config.ts` for local backend model resolution
+**Goal:** `gemini -m gemma4 --local-backend ollama` works end to end with one
+explicitly selected backend and one discovered Gemma 4 model.
 
-### Phase 4: UI & UX
+**Primary files**
 
-10. Update `ModelDialog.tsx` for local backend model selection
-11. Add CLI flags for `--local-backend`
-12. Add health check and connectivity validation
+- `packages/core/src/core/contentGenerator.ts`
+- `packages/core/src/config/models.ts`
+- `packages/core/src/config/config.ts`
+- `packages/core/src/services/localModelService.ts`
+- `packages/cli/src/config/auth.ts`
+- `packages/cli/src/validateNonInterActiveAuth.ts`
+- `packages/cli/src/gemini.tsx`
 
-### Phase 5: Tool Filtering (FunctionGemma)
+**Tasks**
 
-13. Create `ToolFilter` service (`packages/core/src/services/toolFilter.ts`)
-14. Implement FunctionGemma invocation via Ollama API
-15. Integrate `ToolFilter` into `ToolRegistry.getFunctionDeclarations()`
-16. Add tool filter caching with context-hash-based keys
-17. Add VRAM budget check on startup for filter + main model
-18. Add settings schema entries for `toolFiltering` config
+1. Add local backend `AuthType` values and environment detection in
+   `contentGenerator.ts`.
+2. Create a small `LocalModelService` that owns:
+   - backend enum/type definitions
+   - backend base URL resolution
+   - `/v1/models` probing
+   - Gemma 4 filtering
+   - alias-to-discovered-model resolution
+3. Extend `createContentGeneratorConfig()` to return local `baseUrl` values
+   without requiring API keys or OAuth state.
+4. Extend `createContentGenerator()` to build a local `GoogleGenAI` client using
+   `baseUrl` plus headers, following the same wrapping pattern as the existing
+   Gemini/Gateway branches.
+5. Add `--local-backend` CLI parsing in `gemini.tsx` and thread the selected
+   backend into config/bootstrap.
+6. Teach `config.ts` how to resolve the requested local alias (`gemma4`,
+   `gemma4-26b`, etc.) into a discovered backend-native model ID before the
+   first request is sent.
+7. Update `auth.ts` and `validateNonInterActiveAuth.ts` so local auth types are
+   accepted and do not demand cloud credentials.
 
-### Phase 6: Testing
+**Deliberate non-goals for Milestone 1**
 
-19. Unit tests for `LocalModelService`
-20. Unit tests for content generator creation with local backends
-21. Integration tests for local backend connectivity
-22. Unit tests for `ToolFilter` service
-23. Documentation updates
+- no multi-backend grouping
+- no background auto-detection
+- no FunctionGemma filtering
+- no LM Studio load-state metadata beyond basic discovery
+
+**Exit criteria**
+
+- `gemini -m gemma4 --local-backend ollama` reaches a local model successfully.
+- `GEMINI_LOCAL_BACKEND=ollama gemini -m gemma4` works without cloud auth.
+- invalid backend connection produces a clear actionable error.
+- non-interactive mode works with local auth and exits correctly on failures.
+
+### 10.3 Milestone 2 — Discovery, Settings, and UI
+
+**Goal:** local backends feel first-class in startup flow, settings, and model
+selection UI.
+
+**Primary files**
+
+- `packages/cli/src/config/settingsSchema.ts`
+- `packages/cli/src/config/settings.ts`
+- `packages/cli/src/ui/components/ModelDialog.tsx`
+- `packages/cli/src/ui/auth/AuthDialog.tsx`
+- `packages/cli/src/ui/auth/useAuth.ts`
+- `packages/core/src/services/modelConfigService.ts`
+- `packages/core/src/config/defaultModelConfigs.ts`
+
+**Tasks**
+
+1. Add `localModel` settings schema with:
+   - `backend`
+   - `baseUrl`
+   - alias overrides / model mapping
+   - optional future `toolFiltering` subtree
+2. Decide whether the first UI release should:
+   - use the existing dynamic model config path, or
+   - keep local models as a dedicated UI branch in `ModelDialog.tsx` Recommended
+     approach: start with a dedicated local branch in `ModelDialog.tsx`, then
+     move to dynamic model config only after discovery metadata is stable.
+3. Add provider-aware model listing in `ModelDialog.tsx`.
+4. Add backend health/status indicators and selection fallback messaging.
+5. Add explicit startup probing in `gemini.tsx` for configured or default local
+   backends.
+6. Make auth UI understand local auth types so users are not pushed into
+   OAuth/API-key prompts when a local profile is configured.
+7. If multiple backends are detected, group models by provider and preserve
+   provider metadata through selection.
+
+**Exit criteria**
+
+- `settings.json` can configure a local backend cleanly.
+- `/model` shows local Gemma 4 models with backend context.
+- startup can prefer local mode when configured without breaking cloud flows.
+- switching between local and cloud auth types does not leave stale model state.
+
+### 10.4 Milestone 3 — Runtime Metadata and Auto-Tuning
+
+**Goal:** discovered local models drive better defaults for context, vision, and
+thinking behavior.
+
+**Primary files**
+
+- `packages/core/src/services/localModelDiscovery.ts`
+- `packages/core/src/config/config.ts`
+- `packages/core/src/config/models.ts`
+- `packages/core/src/config/defaultModelConfigs.ts`
+
+**Tasks**
+
+1. Add richer model metadata fetching per backend where available.
+2. Normalize backend-native metadata into a shared `LocalModelMetadata` shape.
+3. Derive runtime tuning settings:
+   - effective context window
+   - compression thresholds
+   - vision enablement
+   - thinking defaults
+   - tool-use enablement hints
+4. Integrate those derived values into config/runtime behavior without breaking
+   existing Gemini cloud model behavior.
+5. Keep hard dependencies minimal: if metadata fetch fails, fall back to safe
+   defaults instead of blocking chat.
+
+**Exit criteria**
+
+- local model discovery succeeds even when detailed metadata fetch fails.
+- effective context and thinking defaults can differ by discovered model.
+- cloud model behavior remains unchanged when no local backend is active.
+
+### 10.5 Milestone 4 — Optional FunctionGemma Tool Filtering
+
+**Goal:** reduce tool-schema token cost for constrained local models, but only
+after the base local path is stable.
+
+**Primary files**
+
+- `packages/core/src/services/toolFilter.ts`
+- `packages/core/src/tools/tool-registry.ts`
+- `packages/cli/src/config/settingsSchema.ts`
+
+**Tasks**
+
+1. Add `toolFiltering` settings under `localModel`.
+2. Implement `ToolFilter` as an isolated service with cache, timeout, and safe
+   fallbacks.
+3. Integrate filtering at the tool declaration boundary, not by mutating the
+   canonical tool registry state.
+4. Gate the feature to Ollama plus text-only contexts for the first release.
+5. Add startup/runtime guards for timeout, invalid tool names, and low-memory
+   situations.
+
+**Exit criteria**
+
+- disabling the feature yields identical behavior to baseline.
+- failed FunctionGemma calls fall back cleanly according to configuration.
+- filtered tool lists are observable in tests and logs.
+
+### 10.6 Recommended Patch Sequence
+
+To reduce merge risk, land the work in this order:
+
+1. `AuthType` + env detection + validation changes
+2. `LocalModelService` + backend probing tests
+3. content generator local branch
+4. CLI flag + non-interactive path
+5. config/model alias resolution
+6. settings schema
+7. model dialog / startup UX
+8. metadata auto-tuning
+9. FunctionGemma filtering
+
+### 10.7 Test Plan
+
+**Unit tests**
+
+- `contentGenerator.ts`: local auth types, base URL handling, unsupported
+  backend behavior
+- `models.ts`: alias resolution for `gemma4`, `gemma4-26b`, `gemma4-31b`,
+  `gemma4-e4b`, `gemma4-e2b`
+- `localModelService.ts`: discovery, filtering, backend URL resolution,
+  provider-specific ID parsing
+- `auth.ts` and `validateNonInteractiveAuth.ts`: local auth acceptance and error
+  messages
+- `ModelDialog.tsx`: provider grouping, local/cloud coexistence, selection state
+- `toolFilter.ts`: cache, timeout, fallback, validation of tool names
+
+**Integration tests**
+
+- explicit local backend startup succeeds with mocked `/v1/models`
+- missing backend produces actionable errors
+- switching from local auth to cloud auth resets stale local model resolution
+- model selection persists correctly through settings round-trips
+
+**Manual verification**
+
+- Ollama with `gemma4:e4b` only
+- Ollama with `gemma4:26b` + `gemma4:31b-cloud`
+- LM Studio with one loaded Gemma 4 model
+- no local backend running
+- optional FunctionGemma enabled on Ollama
+
+### 10.8 Definition of Done
+
+This PRD is implementation-complete when all of the following are true:
+
+- users can run Gemini CLI against at least one supported local backend without
+  Google credentials
+- local Gemma 4 aliases resolve deterministically to discovered model IDs
+- the model picker and settings surface local backends clearly
+- failures are actionable and do not strand the user in cloud auth flows
+- the feature is covered by unit tests plus at least one integration path
+- FunctionGemma filtering, if shipped, remains optional and off by default
+
+### 10.9 Verified Implementation Status (audited 2026-05-02, updated 2026-05-02)
+
+**Status by milestone, verified against actual code**
+
+| Milestone                       | Status   | Files verified                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M1: MVP Local Backend**       | COMPLETE | `contentGenerator.ts` (AuthType enum, env detection, content generator config/creation), `models.ts` (Gemma aliases, `isLocalGemma4Alias`, display strings), `localModelService.ts` (discovery, filtering, alias resolution), `auth.ts` (validation), `config.ts` (`refreshAuth` with `LocalModelService`)                                                                                                                |
+| **M2: Discovery, Settings, UI** | COMPLETE | `settingsSchema.ts` (full `localModel` block + `toolFiltering` subtree), `settings.ts` (`applyLocalModelEnvironment`), `schemas/settings.schema.json` (generated, complete), `gemini.tsx` (`autoSelectDiscoveredLocalBackend` with `LocalModelDiscoveryService`), `AuthDialog.tsx` (local backend options), `ModelDialog.tsx` (live discovery-driven provider grouping, backend status indicators, metadata descriptions) |
+| **M3: Metadata Auto-Tuning**    | COMPLETE | `localModelDiscoveryService.ts` (parallel probing + Ollama `POST /api/show` rich metadata fetching), `localModelMetadata.ts` (shared `LocalModelMetadata` interface, `ModelTuningSettings`, `tuneModelFromMetadata()`, `resolveGemma4Defaults()`), exported via `index.ts`                                                                                                                                                |
+| **M4: FunctionGemma Filtering** | COMPLETE | `toolFilter.ts` (`ToolFilter` class with cache, timeout, safe fallbacks), `settingsSchema.ts` (`localModel.toolFiltering` subtree: enabled, model, maxContextMessages, fallbackBehavior, cacheResults, cacheTtl)                                                                                                                                                                                                          |
+
+**Detailed verified status per PRD section**
+
+_Section 3.1 — AuthType Extension:_ COMPLETE. All 5 `USE_LOCAL_*` enum values
+exist in `contentGenerator.ts:59-71`, plus `LocalBackendAuthType` union type,
+`LocalBackendName` type, and all supporting maps (`LOCAL_BACKEND_AUTH_TYPE_MAP`,
+`LOCAL_BACKEND_DEFAULT_BASE_URLS`, `LOCAL_BACKEND_BASE_URL_ENV_VARS`).
+
+_Section 3.2 — Environment Variable Detection:_ COMPLETE. `getAuthTypeFromEnv()`
+checks `GEMINI_LOCAL_BACKEND` first, then falls through to each backend-specific
+env var (`OLLAMA_HOST`, `LM_STUDIO_API_BASE`, etc.) at
+`contentGenerator.ts:196-234`. Per-backend env vars are auto-set from settings
+by `applyLocalModelEnvironment()` in `settings.ts:670-708`.
+
+_Section 3.3 — Content Generator Creation:_ COMPLETE.
+`createContentGeneratorConfig()` handles local backends at
+`contentGenerator.ts:326`, `createContentGenerator()` at
+`contentGenerator.ts:496`. Both use `isLocalBackendAuthType()` guard and create
+`GoogleGenAI` with `apiKey: undefined` pointed at the backend's `/v1` endpoint.
+
+_Section 3.4 — Auth Validation:_ COMPLETE. `validateAuthMethod()` in `auth.ts`
+accepts all 5 local backend types with `return null` (no key required).
+
+_Section 3.5 — Settings Schema:_ COMPLETE. `settingsSchema.ts:1118-1383` defines
+full `localModel` object with `backend` (enum of 5), `baseUrl`, `providers`
+(per-provider `{ baseUrl }`), `modelMapping` (all 6 Gemma 4 aliases), and
+`toolFiltering` (enabled, model, maxContextMessages, fallbackBehavior,
+cacheResults, cacheTtl). Generated artifact `schemas/settings.schema.json`
+contains the complete schema.
+
+_Section 4 — Model Configuration:_ COMPLETE. Model constants in
+`models.ts:64-80`, display strings in `models.ts:276-319`,
+`isLocalGemma4Alias()` helper. `defaultModelConfigs.ts` has concrete Gemma model
+definitions for API-side (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) but local
+aliases (`gemma4`, etc.) are resolved exclusively by `LocalModelService`, not
+through the standard `modelConfigService` path.
+
+_Section 5 — Discovery Results:_ COMPLETE. Reference data from local machine
+testing documented in PRD Sections 5.1-5.3. Rich metadata fetching implemented:
+`LocalModelDiscoveryService.discoverBackends()` probes all 5 backends in
+parallel, `fetchOllamaModelShow()` retrieves quantization/param info via
+`POST /api/show`, `resolveGemma4Defaults()` provides safe fallback metadata per
+variant (E2B, E4B, 26B, 31B). `tuneModelFromMetadata()` derives
+`ModelTuningSettings` including context budgets, vision/audio enablement,
+thinking config, tool-use hints, and performance profiles. Full metadata model:
+`LocalModelMetadata` + `LocalThinkingConfig` + `ModelTuningSettings`.
+
+_Section 6 — Backend-Specific Resolution:_ COMPLETE. `LocalModelService` in
+`localModelService.ts:1-190` implements full discovery (`discoverModels`),
+filtering (`filterGemma4Models`), alias resolution (`resolveModelName`,
+`resolveModelId`), and base URL resolution. Priority: 26b > 31b > e4b > e2b.
+
+_Section 7 — User Experience:_ COMPLETE.
+
+- **7.1 Zero-Config Profile:** IMPLEMENTED via
+  `autoSelectDiscoveredLocalBackend()` in `gemini.tsx:269-307`, called during
+  startup at `gemini.tsx:449-473`. Sets `auth.selectedType` based on discovered
+  backends.
+- **7.2 Commands:** COMPLETE. `--local-backend` CLI flag parsed,
+  `GEMINI_LOCAL_BACKEND` env var respected.
+- **7.3 Settings Configuration:** COMPLETE. Full settings support via
+  `localModel` in `settings.json`, including `toolFiltering` subtree.
+- **7.4 Model Dialog:** COMPLETE. `ModelDialog.tsx` uses
+  `LocalModelDiscoveryService` for live discovery results grouped by provider.
+  Shows backend status indicators (● running per model), "Probing local
+  backends..." placeholder while discovery runs, and falls back to hardcoded
+  aliases when no backends respond. Provider labels (Ollama, LM Studio,
+  Llama.cpp, vLLM, SGLang) shown per model.
+
+_Section 8 — Error Handling:_ COMPLETE. `resolveModelId()` in
+`localModelService.ts` produces actionable errors for unreachable backends,
+missing models, and unsupported variants.
+
+_Section 9 — FunctionGemma:_ COMPLETE. `toolFilter.ts` implements `ToolFilter`
+class with:
+
+- Configuration via `localModel.toolFiltering` settings subtree (disabled by
+  default)
+- Ollama-only gating (only works via Ollama backend)
+- Cache with configurable TTL
+- 3-second timeout on FunctionGemma calls
+- JSON parsing with validation of returned tool names against available list
+- Fallback behaviors: `all-tools` (default), `no-tools`, `core-only`
+- Text-only contexts (no multimodal filtering) Settings schema includes:
+  `toolFiltering.enabled`, `toolFiltering.model`,
+  `toolFiltering.maxContextMessages`, `toolFiltering.fallbackBehavior`,
+  `toolFiltering.cacheResults`, `toolFiltering.cacheTtl`.
+
+_Section 10 — Implementation Plan:_ COMPLETE. All 4 milestones implemented. All
+5 gaps closed. User documentation created at `docs/cli/local-gemma-4.md`.
+
+_Section 11 — Files:_ All files listed in 11 were created or modified. New
+files: `localModelService.ts`, `localModelMetadata.ts`,
+`localModelDiscoveryService.ts`, `toolFilter.ts`, `docs/cli/local-gemma-4.md`.
+
+_Section 12 — Docs:_ User documentation created at `docs/cli/local-gemma-4.md`
+covering setup, model aliases, settings, troubleshooting, backend status, and
+Gemma 4 capabilities.
+
+---
+
+**All gaps closed — all four milestones complete**
+
+| #   | Gap                                              | Priority | Status                                                                                                                                                          |
+| --- | ------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Model picker is alias-based, not discovery-based | High     | **CLOSED** — `ModelDialog.tsx` integrates `LocalModelDiscoveryService` with live provider-grouped results, status indicators, and fallback to hardcoded aliases |
+| 2   | Runtime metadata normalization                   | Medium   | **CLOSED** — `LocalModelDiscoveryService` fetches Ollama `POST /api/show` metadata; `localModelMetadata.ts` defines shared types + auto-tuning algorithm        |
+| 3   | User-facing documentation                        | Low      | **CLOSED** — `docs/cli/local-gemma-4.md` created with setup, troubleshooting, and capability docs                                                               |
+| 4   | Optional FunctionGemma filtering                 | Low      | **CLOSED** — `toolFilter.ts` implements `ToolFilter` with cache, timeout, fallbacks; `settingsSchema.ts` has full `toolFiltering` subtree                       |
+
+**Risk notes**
+
+- UI changes in ModelDialog should NOT duplicate the existing `isLocalModelMode`
+  guard — extend it instead.
+- Discovery metadata must be additive: `/v1/models` alone must still support
+  end-to-end chat.
+- The existing `autoSelectDiscoveredLocalBackend()` in `gemini.tsx` is correct
+  and should be left untouched — it handles auth selection at startup. The UI
+  gap is in ModelDialog not consuming discovery results.
+- `localModelDiscovery.ts` mentioned in the original PRD Section 5.4 does not
+  exist — the actual file is `localModelDiscoveryService.ts`.
 
 ---
 
@@ -1783,6 +2124,6 @@ No additional SDK dependencies — Ollama's REST API is called directly via
 - [Ollama OpenAI-compatible API](https://github.com/ollama/ollama/blob/main/docs/openai.md)
 - [LM Studio Developer Mode](https://lmstudio.ai/docs/api)
 - [Llama.cpp Server](https://github.com/ggml-ai/llama.cpp/tree/master/examples/server)
-- [Gemma 4 on HuggingFace](https://huggingface.co/google/gemma-4-26b-a4b-it)
+- [Gemma 4 on Hugging Face](https://huggingface.co/google/gemma-4-26b-a4b-it)
 - [FunctionGemma on Ollama](https://ollama.com/library/functiongemma)
 - _Built for the Gemini CLI open-source community_

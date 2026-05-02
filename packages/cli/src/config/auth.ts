@@ -11,7 +11,12 @@ export function validateAuthMethod(authMethod: string): string | null {
   loadEnvironment(loadSettings().merged, process.cwd());
   if (
     authMethod === AuthType.LOGIN_WITH_GOOGLE ||
-    authMethod === AuthType.COMPUTE_ADC
+    authMethod === AuthType.COMPUTE_ADC ||
+    authMethod === AuthType.USE_LOCAL_OLLAMA ||
+    authMethod === AuthType.USE_LOCAL_LM_STUDIO ||
+    authMethod === AuthType.USE_LOCAL_LLAMA_CPP ||
+    authMethod === AuthType.USE_LOCAL_VLLM ||
+    authMethod === AuthType.USE_LOCAL_SGLANG
   ) {
     return null;
   }

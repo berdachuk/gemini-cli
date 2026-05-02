@@ -23,6 +23,11 @@ import {
   createContentGeneratorConfig,
   type ContentGenerator,
   type ContentGeneratorConfig,
+  getLocalBackendName,
+  isLocalBackendAuthType,
+  type LocalBackendAuthType,
+  type LocalBackendName,
+  resolveLocalBackendBaseUrl,
   type VertexAiRoutingConfig,
 } from '../core/contentGenerator.js';
 import type { OverageStrategy } from '../billing/billing.js';
@@ -83,6 +88,7 @@ import {
   DEFAULT_GEMINI_FLASH_MODEL,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GEMINI_MODEL_AUTO,
+  GEMMA_MODEL_ALIAS_4,
   isAutoModel,
   isPreviewModel,
   isGemini2Model,
@@ -180,6 +186,7 @@ import { InjectionService } from './injectionService.js';
 import { ExecutionLifecycleService } from '../services/executionLifecycleService.js';
 import { WORKSPACE_POLICY_TIER } from '../policy/config.js';
 import { loadPoliciesFromToml } from '../policy/toml-loader.js';
+import { LocalModelService } from '../services/localModelService.js';
 
 import { CheckerRunner } from '../safety/checker-runner.js';
 import { ContextBuilder } from '../safety/context-builder.js';
@@ -586,6 +593,13 @@ export interface WorktreeSettings {
   baseSha: string;
 }
 
+export interface LocalModelConfig {
+  backend?: string;
+  baseUrl?: string;
+  providers?: Partial<Record<LocalBackendName, { baseUrl?: string }>>;
+  modelMapping?: Partial<Record<string, string>>;
+}
+
 export interface ConfigParameters {
   sessionId: string;
   clientName?: string;
@@ -634,6 +648,7 @@ export interface ConfigParameters {
   includeDirectories?: string[];
   bugCommand?: BugCommandSettings;
   model: string;
+  localModel?: LocalModelConfig;
   disableLoopDetection?: boolean;
   maxSessionTurns?: number;
   acpMode?: boolean;
@@ -966,6 +981,7 @@ export class Config implements McpContext, AgentLoopContext {
   private readonly trackerEnabled: boolean;
   private readonly planModeRoutingEnabled: boolean;
   private readonly modelSteering: boolean;
+  private readonly localModel: LocalModelConfig | undefined;
   private memoryContextManager?: MemoryContextManager;
   private readonly contextManagement: ContextManagementConfig;
   private terminalBackground: string | undefined = undefined;
@@ -1111,6 +1127,7 @@ export class Config implements McpContext, AgentLoopContext {
     this.fileDiscoveryService = params.fileDiscoveryService ?? null;
     this.bugCommand = params.bugCommand;
     this.model = params.model;
+    this.localModel = params.localModel;
     this.disableLoopDetection = params.disableLoopDetection ?? false;
     this._activeModel = params.model;
     this.enableAgents = params.enableAgents ?? true;
@@ -1540,6 +1557,8 @@ export class Config implements McpContext, AgentLoopContext {
     baseUrl?: string,
     customHeaders?: Record<string, string>,
   ) {
+    const previousAuthType = this.contentGeneratorConfig?.authType;
+
     // Reset availability service when switching auth
     this.modelAvailabilityService.reset();
 
@@ -1560,6 +1579,41 @@ export class Config implements McpContext, AgentLoopContext {
     // during the transition.
     if (this.contentGeneratorConfig) {
       this.contentGeneratorConfig.authType = undefined;
+    }
+
+    if (previousAuthType && isLocalBackendAuthType(previousAuthType)) {
+      const currentModel = this.getModel();
+      if (
+        !isLocalBackendAuthType(authMethod) &&
+        !currentModel.startsWith('gemini-') &&
+        !currentModel.startsWith('gemma-')
+      ) {
+        this.setModel(DEFAULT_GEMINI_MODEL_AUTO, true);
+      }
+    }
+
+    if (isLocalBackendAuthType(authMethod)) {
+      const localModelService = new LocalModelService();
+      const currentModel = this.getModel();
+      const requestedModel =
+        isAutoModel(currentModel) ||
+        currentModel.startsWith('gemini-') ||
+        currentModel.startsWith('gemma-')
+          ? GEMMA_MODEL_ALIAS_4
+          : currentModel;
+
+      baseUrl = resolveLocalBackendBaseUrl(
+        authMethod,
+        baseUrl ?? this.localModel?.baseUrl,
+        this.getConfiguredLocalBackendBaseUrl(authMethod),
+      );
+      const resolvedModel = await localModelService.resolveModelId(
+        authMethod,
+        requestedModel,
+        baseUrl,
+        this.localModel?.modelMapping,
+      );
+      this.setModel(resolvedModel, true);
     }
 
     const newContentGeneratorConfig = await createContentGeneratorConfig(
@@ -1877,6 +1931,13 @@ export class Config implements McpContext, AgentLoopContext {
 
   getModel(): string {
     return this.model;
+  }
+
+  private getConfiguredLocalBackendBaseUrl(
+    authType: LocalBackendAuthType,
+  ): string | undefined {
+    const backendName = getLocalBackendName(authType);
+    return this.localModel?.providers?.[backendName]?.baseUrl;
   }
 
   getDisableLoopDetection(): boolean {

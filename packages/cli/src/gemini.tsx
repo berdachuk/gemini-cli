@@ -33,8 +33,13 @@ import {
   ValidationRequiredError,
   type AdminControlsSettings,
   debugLogger,
+  getAuthTypeFromEnv,
+  getLocalBackendAuthType,
   isHeadlessMode,
+  isLocalBackendAuthType,
+  LocalModelDiscoveryService,
   Storage,
+  type LocalBackendName,
 } from '@google/gemini-cli-core';
 
 import { loadCliConfig, parseArguments } from './config/config.js';
@@ -261,6 +266,46 @@ export async function startInteractiveUI(
   );
 }
 
+export async function autoSelectDiscoveredLocalBackend(
+  settings: LoadedSettings,
+  discoveryService = new LocalModelDiscoveryService(),
+): Promise<void> {
+  const selectedType = settings.merged.security.auth.selectedType;
+  if (
+    selectedType &&
+    selectedType !== AuthType.LEGACY_CLOUD_SHELL &&
+    selectedType !== AuthType.COMPUTE_ADC
+  ) {
+    return;
+  }
+
+  if (
+    process.env['CLOUD_SHELL'] === 'true' ||
+    process.env['GEMINI_CLI_USE_COMPUTE_ADC'] === 'true'
+  ) {
+    return;
+  }
+
+  const envAuthType = getAuthTypeFromEnv();
+  if (envAuthType) {
+    return;
+  }
+
+  const discovery = await discoveryService.discoverBackends({
+    baseUrls: getConfiguredDiscoveryBaseUrls(settings),
+  });
+
+  if (!discovery.preferredBackend) {
+    return;
+  }
+
+  settings.setValue(
+    SettingScope.User,
+    'security.auth.selectedType',
+    discovery.preferredBackend.authType,
+  );
+}
+
 export async function main() {
   let config: Config | undefined;
   const cliStartupHandle = startupProfiler.start('cli_startup');
@@ -392,11 +437,21 @@ export async function main() {
     validateDnsResolutionOrder(settings.merged.advanced.dnsResolutionOrder),
   );
 
+  const explicitLocalAuthType = getLocalBackendAuthType(argv.localBackend);
+  if (explicitLocalAuthType) {
+    settings.setValue(
+      SettingScope.User,
+      'security.auth.selectedType',
+      explicitLocalAuthType,
+    );
+  }
+
   // Set a default auth type if one isn't set or is set to a legacy type
   if (
     !settings.merged.security.auth.selectedType ||
     settings.merged.security.auth.selectedType === AuthType.LEGACY_CLOUD_SHELL
   ) {
+    const envAuthType = getAuthTypeFromEnv();
     if (
       process.env['CLOUD_SHELL'] === 'true' ||
       process.env['GEMINI_CLI_USE_COMPUTE_ADC'] === 'true'
@@ -406,6 +461,14 @@ export async function main() {
         'security.auth.selectedType',
         AuthType.COMPUTE_ADC,
       );
+    } else if (envAuthType && isLocalBackendAuthType(envAuthType)) {
+      settings.setValue(
+        SettingScope.User,
+        'security.auth.selectedType',
+        envAuthType,
+      );
+    } else {
+      await autoSelectDiscoveredLocalBackend(settings);
     }
   }
 
@@ -796,6 +859,19 @@ export async function main() {
     await runExitCleanup();
     process.exit(ExitCodes.SUCCESS);
   }
+}
+
+function getConfiguredDiscoveryBaseUrls(
+  settings: LoadedSettings,
+): Partial<Record<LocalBackendName, string>> {
+  const providers = settings.merged.localModel?.providers;
+  return {
+    ollama: providers?.ollama?.baseUrl,
+    'lm-studio': providers?.['lm-studio']?.baseUrl,
+    'llama-cpp': providers?.['llama-cpp']?.baseUrl,
+    vllm: providers?.vllm?.baseUrl,
+    sglang: providers?.sglang?.baseUrl,
+  };
 }
 
 export function initializeOutputListenersAndFlush(config?: Config) {

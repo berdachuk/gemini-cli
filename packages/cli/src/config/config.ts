@@ -80,6 +80,7 @@ import { runExitCleanup } from '../utils/cleanup.js';
 export interface CliArgs {
   query: string | undefined;
   model: string | undefined;
+  localBackend?: string | undefined;
   sandbox: boolean | string | undefined;
   debug: boolean | undefined;
   prompt: string | undefined;
@@ -284,6 +285,13 @@ export async function parseArguments(
           type: 'string',
           nargs: 1,
           description: `Model`,
+        })
+        .option('local-backend', {
+          type: 'string',
+          nargs: 1,
+          choices: ['ollama', 'lm-studio', 'llama-cpp', 'vllm', 'sglang'],
+          description:
+            'Use a local OpenAI-compatible backend for model inference.',
         })
         .option('prompt', {
           alias: 'p',
@@ -537,6 +545,11 @@ export async function parseArguments(
   // Keep CliArgs.query as a string for downstream typing
   result['query'] = q || undefined;
   result['startupMessages'] = startupMessages;
+
+  const localBackendValue = result['local-backend'];
+  if (typeof localBackendValue === 'string') {
+    process.env['GEMINI_LOCAL_BACKEND'] = localBackendValue;
+  }
 
   // The import format is now only controlled by settings.memoryImportFormat
   // We no longer accept it as a CLI argument
@@ -1039,6 +1052,7 @@ export async function loadCliConfig(
     fileDiscoveryService: fileService,
     bugCommand: settings.advanced?.bugCommand,
     model: resolvedModel,
+    localModel: settings.localModel,
     maxSessionTurns: settings.model?.maxSessionTurns,
 
     listExtensions: argv.listExtensions || false,
