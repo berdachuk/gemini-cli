@@ -598,6 +598,14 @@ export interface LocalModelConfig {
   baseUrl?: string;
   providers?: Partial<Record<LocalBackendName, { baseUrl?: string }>>;
   modelMapping?: Partial<Record<string, string>>;
+  toolFiltering?: {
+    enabled?: boolean;
+    model?: string;
+    maxContextMessages?: number;
+    fallbackBehavior?: 'all-tools' | 'no-tools' | 'core-only';
+    cacheResults?: boolean;
+    cacheTtl?: number;
+  };
 }
 
 export interface ConfigParameters {
@@ -1931,6 +1939,23 @@ export class Config implements McpContext, AgentLoopContext {
 
   getModel(): string {
     return this.model;
+  }
+
+  getLocalBackendBaseUrl(): string | undefined {
+    return this.localModel?.baseUrl;
+  }
+
+  getToolFilteringConfig():
+    | {
+        enabled?: boolean;
+        model?: string;
+        maxContextMessages?: number;
+        fallbackBehavior?: 'all-tools' | 'no-tools' | 'core-only';
+        cacheResults?: boolean;
+        cacheTtl?: number;
+      }
+    | undefined {
+    return this.localModel?.toolFiltering;
   }
 
   private getConfiguredLocalBackendBaseUrl(

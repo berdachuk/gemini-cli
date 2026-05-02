@@ -62,6 +62,10 @@ export class ToolFilter {
       }
     }
 
+    if (allTools.length === 0) {
+      return [];
+    }
+
     try {
       const filteredNames = await this.callFunctionGemma(
         toolNames,
