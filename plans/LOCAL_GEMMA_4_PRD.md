@@ -72,19 +72,33 @@ Startup / --local-backend <name>
     │     ├── GET http://localhost:8000/v1/models  → 200 OK → vLLM
     │     └── GET http://localhost:30000/v1/models → 200 OK → SGLang
     │
-    └── Discover Gemma models (all families: Gemma 2, 3, 4, etc.)
+    └── Discover Gemma 4 models
           ├── GET {baseUrl}/v1/models
-          ├── Filter by Gemma family patterns:
-          │     - Contains 'gemma' (case-insensitive)
+          ├── Filter by Gemma 4 patterns:
+          │     - Contains 'gemma' AND '4' (case-insensitive)
           │     - Exclude: embedding-only models
           │     - Special classification: functiongemma → ToolFilter service
-          ├── Group by family (gemma2, gemma3, gemma4)
-          ├── Map discovered IDs to aliases per family:
-          │     gemma4 → 26B variant (default), 31B, 31B-cloud
-          │     gemma3 → 12B, 27B, etc.
-          │     gemma2 → 2B, 9B, 27B, etc.
-          └── Expose all discovered Gemma models in ModelDialog and CLI
+          ├── Map discovered IDs to aliases:
+          │     gemma4 → 26b variant (default), 31b, 31b-cloud, e4b, e2b
+           └── Expose all discovered Gemma 4 models in ModelDialog and CLI
 ```
+
+#### 2.2.1 Multi-Backend Handling
+
+When more than one local backend is detected, models are **grouped by provider**
+rather than flattened into a single list:
+
+- **Discovery**: Probe all known backends in **parallel** (not serial) → collect
+  all Gemma 4 models from each responding backend
+- **Deduplication**: Models with the same canonical name (e.g., `gemma4:26b`)
+  appearing on multiple backends are listed once under each provider — the user
+  chooses which backend to use for that model
+- **Provider metadata**: Each discovered model carries a `providerId` (`ollama`,
+  `lm-studio`, `llama-cpp`, `vllm`, `sglang`) so the UI and resolution logic
+  know which backend to route requests to
+- **Backend priority**: When auto-selecting a default model, Ollama is preferred
+  (largest Gemma 4 ecosystem, 29 tags), then LM Studio, then
+  Llama.cpp/vLLM/SGLang
 
 ### 2.3 Model Name Resolution Strategy
 
@@ -92,10 +106,9 @@ Model IDs are **never hardcoded** — instead, the system:
 
 1. **Discovers** all models via `GET /v1/models` → returns
    `{ data: [{ id: "name", ... }] }`
-2. **Filters** by Gemma family using pattern matching (all generations: Gemma 2,
-   3, 4, etc.)
-3. **Groups** models by family for organized UI presentation
-4. **Maps** discovered IDs to CLI aliases heuristically per family:
+2. **Filters** by Gemma 4 family using pattern matching (contains `gemma` AND
+   `4`, case-insensitive)
+3. **Maps** discovered IDs to CLI aliases heuristically:
 
 **Gemma 4 family — 29 models on Ollama (verified against
 ollama.com/library/gemma4/tags):**
@@ -189,20 +202,6 @@ Cloud: gemma4:31b-cloud (Ollama hosted, 30.7B, 256K ctx, Text+Image, no local si
 | `gemma4:31b`       | Excellent (80% LiveCodeBench, 2150 Codeforces) | Yes, native function calling | Yes, configurable thinking | High-end workstation | **Include** — best-in-class local coding, complex agentic tasks     |
 | `gemma4:31b-cloud` | Excellent (same as 31B)                        | Yes, remote inference        | Yes, configurable thinking | Cloud                | **Include** — Ollama cloud-hosted, no local GPU needed              |
 
-**Gemma 3 family (auto-discovered):** | Alias | Resolution Rule | | --- | --- |
-| `gemma3` | Largest detected Gemma 3 model | | `gemma3:12b` | Detected model
-with `12b` or `12` in name | | `gemma3:27b` | Detected model with `27b` or `27`
-in name | | `gemma3:4b` | Detected model with `4b` or `4` in name | |
-`gemma3:1b` | Detected model with `1b` or `1` in name |
-
-**Gemma 2 family (auto-discovered):** | Alias | Resolution Rule | | --- | --- |
-| `gemma2` | Largest detected Gemma 2 model | | `gemma2:27b` | Detected model
-with `27b` or `27` in name | | `gemma2:9b` | Detected model with `9b` or `9` in
-name | | `gemma2:2b` | Detected model with `2b` or `2` in name |
-
-If no Gemma models are discovered, the system falls back to listing **all
-available models** and lets the user pick any.
-
 ---
 
 ## 3. Architecture Integration
@@ -275,38 +274,81 @@ createContentGenerator() {
   ├── LOGIN_WITH_GOOGLE/COMPUTE_ADC (existing)
   ├── USE_GEMINI/USE_VERTEX_AI/GATEWAY (existing)
   └── NEW: USE_LOCAL_OLLAMA/USE_LOCAL_LM_STUDIO/USE_LOCAL_LLAMA_CPP/USE_LOCAL_VLLM/USE_LOCAL_SGLANG
-       └── LocalContentGenerator (OpenAI-compatible API via GoogleGenAI)
+       └── GoogleGenAI with custom baseUrl (OpenAI-compatible API)
 }
 ```
 
 **Implementation approach**: All five local backends expose OpenAI-compatible
-`/v1/chat/completions` endpoints. We create a single `LocalContentGenerator` (or
-direct `GoogleGenAI` instance with custom `baseUrl`) that works across all five:
+`/v1/chat/completions` endpoints. A single
+`new GoogleGenAI({ apiKey: 'not-needed', vertexai: false, httpOptions: { baseUrl } })`
+works across all five.
 
-| Backend   | Default Base URL            |
-| --------- | --------------------------- |
-| Ollama    | `http://localhost:11434/v1` |
-| LM Studio | `http://localhost:1234/v1`  |
-| Llama.cpp | `http://localhost:8080/v1`  |
+In `createContentGenerator()` at `contentGenerator.ts:282-347`, add a new block
+for local auth types **before** the `throw` on line 345:
 
-These base URLs are configurable via environment variables:
+```typescript
+// ... existing USE_GEMINI/USE_VERTEX_AI/GATEWAY blocks ...
 
-- `OLLAMA_HOST` for Ollama (default: `http://localhost:11434/v1`)
-- `LM_STUDIO_API_BASE` for LM Studio (default: `http://localhost:1234/v1`)
-- `LLAMA_CPP_SERVER_BASE` for Llama.cpp (default: `http://localhost:8080/v1`)
-- `VLLM_API_BASE` for vLLM (default: `http://localhost:8000/v1`)
-- `SGLANG_API_BASE` for SGLang (default: `http://localhost:30000/v1`)
+// Local inference backends (OpenAI-compatible)
+if (
+  contentGeneratorConfig.authType === AuthType.USE_LOCAL_OLLAMA ||
+  contentGeneratorConfig.authType === AuthType.USE_LOCAL_LM_STUDIO ||
+  contentGeneratorConfig.authType === AuthType.USE_LOCAL_LLAMA_CPP ||
+  contentGeneratorConfig.authType === AuthType.USE_LOCAL_VLLM ||
+  contentGeneratorConfig.authType === AuthType.USE_LOCAL_SGLANG
+) {
+  checkContentGeneratorConfig(contentGeneratorConfig);
+  const generator = new GoogleGenAI({
+    apiKey: 'not-needed',
+    vertexai: false,
+    httpOptions: { baseUrl: contentGeneratorConfig.baseUrl! },
+  });
+  const localModel = config.getModel();
+  return new UserTierIdpContentGenerator(
+    generator.models,
+    localModel,
+    contentGeneratorConfig,
+  );
+}
+
+// Existing throw for unsupported auth types:
+throw new Error(`Unsupported authType: ${contentGeneratorConfig.authType}`);
+```
+
+Similarly, `createContentGeneratorConfig()` at `contentGenerator.ts:125-186`
+needs a new block before the fallthrough at line 185:
+
+```typescript
+// ... existing GATEWAY block (lines 178-184) ...
+
+// Local inference backends
+if (
+  config.authType === AuthType.USE_LOCAL_OLLAMA ||
+  config.authType === AuthType.USE_LOCAL_LM_STUDIO ||
+  config.authType === AuthType.USE_LOCAL_LLAMA_CPP ||
+  config.authType === AuthType.USE_LOCAL_VLLM ||
+  config.authType === AuthType.USE_LOCAL_SGLANG
+) {
+  return {
+    ...contentGeneratorConfig,
+    authType: config.authType,
+    baseUrl: localModelService.getApiBase(config.authType),
+  };
+}
+
+return contentGeneratorConfig; // line 185 — existing fallthrough
+```
 
 ### 3.4 Auth Validation
 
 Update `packages/cli/src/config/auth.ts` to handle new auth types:
 
 ```typescript
-case AuthType.USE_LOCAL_OLLAMA:
-case AuthType.USE_LOCAL_LM_STUDIO:
-case AuthType.USE_LOCAL_LLAMA_CPP:
-case AuthType.USE_LOCAL_VLLM:
-case AuthType.USE_LOCAL_SGLANG:
+case 'local-ollama':
+case 'local-lm-studio':
+case 'local-llama-cpp':
+case 'local-vllm':
+case 'local-sglang':
   return null; // No API key required for local backends
 ```
 
@@ -315,10 +357,10 @@ case AuthType.USE_LOCAL_SGLANG:
 Update `packages/cli/src/config/settingsSchema.ts` to add local backend
 configuration:
 
-```typescript
-localBackend: {
+````typescript
+localModel: {
   type: 'object',
-  label: 'Local LLM Backend',
+  label: 'Local Model',
   properties: {
     backend: {
       type: 'string',
@@ -334,16 +376,34 @@ localBackend: {
       description: 'Custom model name mappings per alias',
       properties: {
         gemma4: { type: 'string' },
-        gemma4_26b: { type: 'string' },
-        gemma4_31b: { type: 'string' },
-        gemma4_31b_cloud: { type: 'string' },
-        gemma4_e4b: { type: 'string' },
-        gemma4_e2b: { type: 'string' },
+        'gemma4-26b': { type: 'string' },
+        'gemma4-31b': { type: 'string' },
+        'gemma4-31b-cloud': { type: 'string' },
+        'gemma4-e4b': { type: 'string' },
+        'gemma4-e2b': { type: 'string' },
       },
     },
   },
 },
-```
+
+### 3.6 Existing Gemma Model Router (Coexistence)
+
+The codebase already has `experimental.gemmaModelRouter` (`settingsSchema.ts:2310-2380`)
+— a LiteRT-LM based local Gemma inference path using a Gemini API shim. This
+PRD's approach is architecturally different and independent:
+
+| Feature | Existing Router (LiteRT-LM) | This PRD (OpenAI API) |
+| --- | --- | --- |
+| **Protocol** | Gemini API shim | OpenAI-compatible `/v1` |
+| **Backends** | LiteRT-LM only | Ollama, LM Studio, Llama.cpp, vLLM, SGLang |
+| **Model Discovery** | Pre-configured classifier | Dynamic `GET /v1/models` |
+| **Tool Use** | Not supported | Supported (native function calling) |
+| **Audience** | Experimental LiteRT users | General local LLM community |
+
+The two paths coexist without conflict. Users choose one by toggling
+`experimental.gemmaModelRouter.enabled` (LiteRT) or setting
+`localModel.backend` (this PRD). Future versions may merge both under a unified
+local backend abstraction, but that is outside this PRD's scope.
 
 ---
 
@@ -355,7 +415,7 @@ Add to `packages/core/src/config/defaultModelConfigs.ts` under
 `modelDefinitions`. All model IDs are resolved dynamically at runtime:
 
 ```typescript
-// Gemma 4 family
+// Gemma 4 family (local inference)
 'gemma4': {
   tier: 'custom',
   family: 'gemma-4',
@@ -363,109 +423,42 @@ Add to `packages/core/src/config/defaultModelConfigs.ts` under
   isVisible: true,
   features: { thinking: true, multimodalToolUse: false },
 },
-'gemma4:26b': {
+'gemma4-26b': {
   tier: 'custom',
   family: 'gemma-4',
   isPreview: false,
   isVisible: false,       // Hidden alias, only shown when 26B model detected
   features: { thinking: true, multimodalToolUse: false },
 },
-'gemma4:31b': {
+'gemma4-31b': {
   tier: 'custom',
   family: 'gemma-4',
   isPreview: false,
   isVisible: true,
   features: { thinking: true, multimodalToolUse: false },
 },
-'gemma4:31b-cloud': {
+'gemma4-31b-cloud': {
   tier: 'custom',
   family: 'gemma-4',
   isPreview: false,
   isVisible: true,
   features: { thinking: true, multimodalToolUse: false },
 },
-'gemma4:e4b': {
+'gemma4-e4b': {
   tier: 'custom',
   family: 'gemma-4',
   isPreview: false,
   isVisible: true,
   features: { thinking: true, multimodalToolUse: false },
 },
-'gemma4:e2b': {
+'gemma4-e2b': {
   tier: 'custom',
   family: 'gemma-4',
   isPreview: false,
   isVisible: true,
   features: { thinking: true, multimodalToolUse: false },
 },
-
-// Gemma 3 family (auto-discovered when available)
-'gemma3': {
-  tier: 'custom',
-  family: 'gemma-3',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma3:27b': {
-  tier: 'custom',
-  family: 'gemma-3',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma3:12b': {
-  tier: 'custom',
-  family: 'gemma-3',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma3:4b': {
-  tier: 'custom',
-  family: 'gemma-3',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma3:1b': {
-  tier: 'custom',
-  family: 'gemma-3',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-
-// Gemma 2 family (auto-discovered when available)
-'gemma2': {
-  tier: 'custom',
-  family: 'gemma-2',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma2:27b': {
-  tier: 'custom',
-  family: 'gemma-2',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma2:9b': {
-  tier: 'custom',
-  family: 'gemma-2',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-'gemma2:2b': {
-  tier: 'custom',
-  family: 'gemma-2',
-  isPreview: false,
-  isVisible: true,
-  features: { thinking: false, multimodalToolUse: false },
-},
-```
+````
 
 ### 4.2 Model Configs (Same Generation Config, Model Field Is Placeholder)
 
@@ -564,46 +557,29 @@ User runs: gemini -m gemma4 --local-backend ollama
 Add to `packages/core/src/config/models.ts`:
 
 ```typescript
-// Gemma 4
+// Gemma 4 (local inference)
 export const GEMMA_MODEL_ALIAS_4 = 'gemma4';
-export const GEMMA_MODEL_ALIAS_4_26B = 'gemma4:26b';
-export const GEMMA_MODEL_ALIAS_4_31B = 'gemma4:31b';
-export const GEMMA_MODEL_ALIAS_4_31B_CLOUD = 'gemma4:31b-cloud';
-export const GEMMA_MODEL_ALIAS_4_E4B = 'gemma4:e4b';
-export const GEMMA_MODEL_ALIAS_4_E2B = 'gemma4:e2b';
+export const GEMMA_MODEL_ALIAS_4_26B = 'gemma4-26b';
+export const GEMMA_MODEL_ALIAS_4_31B = 'gemma4-31b';
+export const GEMMA_MODEL_ALIAS_4_31B_CLOUD = 'gemma4-31b-cloud';
+export const GEMMA_MODEL_ALIAS_4_E4B = 'gemma4-e4b';
+export const GEMMA_MODEL_ALIAS_4_E2B = 'gemma4-e2b';
 
-// Gemma 3
-export const GEMMA_MODEL_ALIAS_3 = 'gemma3';
-export const GEMMA_MODEL_ALIAS_3_27B = 'gemma3:27b';
-export const GEMMA_MODEL_ALIAS_3_12B = 'gemma3:12b';
-export const GEMMA_MODEL_ALIAS_3_4B = 'gemma3:4b';
-export const GEMMA_MODEL_ALIAS_3_1B = 'gemma3:1b';
-
-// Gemma 2
-export const GEMMA_MODEL_ALIAS_2 = 'gemma2';
-export const GEMMA_MODEL_ALIAS_2_27B = 'gemma2:27b';
-export const GEMMA_MODEL_ALIAS_2_9B = 'gemma2:9b';
-export const GEMMA_MODEL_ALIAS_2_2B = 'gemma2:2b';
-
-// All local Gemma aliases (for detection in ModelDialog, etc.)
-export const LOCAL_GEMMA_ALIASES = new Set([
+// All local Gemma 4 aliases (for detection in ModelDialog, etc.)
+export const LOCAL_GEMMA_4_ALIASES = new Set([
   GEMMA_MODEL_ALIAS_4,
   GEMMA_MODEL_ALIAS_4_26B,
   GEMMA_MODEL_ALIAS_4_31B,
   GEMMA_MODEL_ALIAS_4_31B_CLOUD,
   GEMMA_MODEL_ALIAS_4_E4B,
   GEMMA_MODEL_ALIAS_4_E2B,
-  GEMMA_MODEL_ALIAS_3,
-  GEMMA_MODEL_ALIAS_3_27B,
-  GEMMA_MODEL_ALIAS_3_12B,
-  GEMMA_MODEL_ALIAS_3_4B,
-  GEMMA_MODEL_ALIAS_3_1B,
-  GEMMA_MODEL_ALIAS_2,
-  GEMMA_MODEL_ALIAS_2_27B,
-  GEMMA_MODEL_ALIAS_2_9B,
-  GEMMA_MODEL_ALIAS_2_2B,
 ]);
 ```
+
+**Note:** These constants live alongside existing API-model Gemma constants
+(`GEMMA_4_31B_IT_MODEL`, `GEMMA_4_26B_A4B_IT_MODEL` at `models.ts:64-65`) which
+are for the Google Gemini API (cloud), not local inference. Local aliases use
+`gemma4-*` (hyphen) naming; API models use `gemma-4-*` naming.
 
 ---
 
@@ -616,11 +592,6 @@ export const LOCAL_GEMMA_ALIASES = new Set([
   "data": [
     {
       "id": "google/gemma-4-26b-a4b",
-      "object": "model",
-      "owned_by": "organization_owner"
-    },
-    {
-      "id": "qwen/qwen3.5-9b",
       "object": "model",
       "owned_by": "organization_owner"
     },
@@ -669,7 +640,7 @@ now) | | `gemma4:31b` | Dense 30.7B local (not cloud) |
 **Not running** on this machine — server returned HTML page. Discovery will fail
 gracefully and report the backend as unavailable.
 
-### 7.4 Metadata Model & Auto-Tuning Map
+### 5.4 Metadata Model & Auto-Tuning Map
 
 ```typescript
 // packages/core/src/services/localModelDiscovery.ts
@@ -730,7 +701,7 @@ interface LocalModelMetadata {
 /** Architecture-aware profile — describes the model's internal structure
  *  so gemini-cli can optimize context management, batching, and memory usage. */
 interface ArchitectureProfile {
-  family: string; // "gemma4", "gemma3", "qwen35", etc.
+  family: string; // "gemma4", "qwen35", etc.
   layerCount: number; // transformer block count (e.g., 30 for gemma4:26b)
 
   // Attention mechanism — critical for context window utilization
@@ -831,7 +802,7 @@ interface ModelTuningSettings {
 }
 ```
 
-### 7.5 Auto-Tuning Algorithm
+### 5.5 Auto-Tuning Algorithm
 
 ```
 function tuneModelFromMetadata(meta: LocalModelMetadata): ModelTuningSettings {
@@ -915,7 +886,7 @@ function tuneModelFromMetadata(meta: LocalModelMetadata): ModelTuningSettings {
 }
 ```
 
-### 7.6 Verified Architecture Profiles
+### 5.6 Verified Architecture Profiles
 
 ```
 // Data sourced from ollama.com/library/gemma4 (official Google DeepMind specs).
@@ -1087,7 +1058,7 @@ GEMMA4_ARCHITECTURE_PROFILES = {
 };
 ```
 
-### 7.7 Context Verification Process
+### 5.7 Context Verification Process
 
 ```
 function verifyAvailableContext(meta: LocalModelMetadata, advertised: number): number {
@@ -1141,7 +1112,7 @@ function verifyAvailableContext(meta: LocalModelMetadata, advertised: number): n
 | `gemma4:31b-cloud`                   | 256K             | N/A (cloud)          | N/A                  | Ollama-hosted, no local GPU needed              |
 | `google/gemma-4-26b-a4b` (LM Studio) | 256K             | ~32K                 | 4,096                | Requires manual context adjustment in LM Studio |
 
-### 7.8 Impact on Gemini CLI Behavior
+### 5.8 Impact on Gemini CLI Behavior
 
 | Metadata Field                            | Affected CLI Behavior                                                                                                                                                |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------- | ---------------- |
@@ -1158,7 +1129,7 @@ function verifyAvailableContext(meta: LocalModelMetadata, advertised: number): n
 | `isLoaded` (LM Studio)                    | Shows load/unload state in UI; prompts user to load model before use                                                                                                 |
 | `architecture`                            | Used for prompt template selection, tokenizer compatibility checks                                                                                                   |
 
-### 7.9 Discovery Service API
+### 5.9 Discovery Service API
 
 ```typescript
 // packages/core/src/services/localModelDiscovery.ts
@@ -1188,7 +1159,7 @@ export class LocalModelDiscovery {
 }
 ```
 
-### 7.10 Integration Flow
+### 5.10 Integration Flow
 
 ```
 CLI Startup
@@ -1236,30 +1207,19 @@ LocalModelService
 ├── discoverModels(baseUrl): Promise<LocalModel[]>
 │     └── GET {baseUrl}/v1/models → parse { data: [{ id, ... }] }
 │
-├── filterGemmaModels(models): LocalModel[]
-│     └── Pattern match IDs containing 'gemma' (case-insensitive)
+├── filterGemma4Models(models): LocalModel[]
+│     └── Pattern match IDs containing 'gemma' AND '4' (case-insensitive)
 │         Exclude: embedding-only variants
 │         Separate: functiongemma → ToolFilter (not a chat model)
-│         Group by family: gemma2, gemma3, gemma4
 │
 ├── resolveModelName(alias, discoveredModels): string | undefined
-│     ├── gemma4 family:
-│     │     ├── alias='gemma4'          → largest Gemma 4 model (prefer 26B)
-│     │     ├── alias='gemma4:26b'     → model with '26b' or '26' in ID
-│     │     ├── alias='gemma4:31b'     → model with '31b' or '31' in ID (exclude 'cloud')
-│     │     ├── alias='gemma4:31b-cloud' → model with '31b'/'31' AND 'cloud' in ID
-│     │     └── alias='gemma4:e4b'     → model with 'e4b' in ID
-│     ├── gemma3 family:
-│     │     ├── alias='gemma3'     → largest Gemma 3 model
-│     │     ├── alias='gemma3:27b' → model with '27b' or '27' in ID
-│     │     ├── alias='gemma3:12b' → model with '12b' or '12' in ID
-│     │     ├── alias='gemma3:4b'  → model with '4b' or '4' in ID
-│     │     └── alias='gemma3:1b'  → model with '1b' or '1' in ID
-│     └── gemma2 family:
-│           ├── alias='gemma2'     → largest Gemma 2 model
-│           ├── alias='gemma2:27b' → model with '27b' or '27' in ID
-│           ├── alias='gemma2:9b'  → model with '9b' or '9' in ID
-│           └── alias='gemma2:2b'  → model with '2b' or '2' in ID
+│     └── gemma4 family:
+│           ├── alias='gemma4'              → largest Gemma 4 model (prefer 26B)
+│           ├── alias='gemma4-26b'          → model with '26b' or '26' in ID
+│           ├── alias='gemma4-31b'          → model with '31b' or '31' in ID (exclude 'cloud')
+│           ├── alias='gemma4-31b-cloud'    → model with '31b'/'31' AND 'cloud' in ID
+│           ├── alias='gemma4-e4b'         → model with 'e4b' in ID
+│           └── alias='gemma4-e2b'         → model with 'e2b' in ID
 │
 ├── getApiBase(backend): string
 │     └── Default URL or env override
@@ -1281,78 +1241,30 @@ function resolveModelAliasToDiscoveredId(
   alias: string,
   discoveredModels: LocalModel[],
 ): string | undefined {
-  // Filter all Gemma models across all generations
-  const gemmaModels = discoveredModels.filter(m =>
+  // Filter Gemma 4 models only
+  const gemma4Models = discoveredModels.filter(m =>
     /gemma/i.test(m.id) &&
-    !/functiongemma/i.test(m.id) &&               // Exclude functiongemma
-    !/embed/i.test(m.id)                          // Exclude embedding models
+    /4/i.test(m.id) &&                              // Gemma 4 only
+    !/functiongemma/i.test(m.id) &&                 // Exclude functiongemma
+    !/embed/i.test(m.id)                            // Exclude embedding models
   );
 
-  if (gemmaModels.length === 0) return undefined;
+  if (gemma4Models.length === 0) return undefined;
 
-  // Group by detected family
-  const family = detectGemmaFamily(gemmaModels, alias);
-
-  switch (family) {
-    case 'gemma4':
-      return resolveGemma4Model(alias, gemmaModels);
-    case 'gemma3':
-      return resolveGemma3Model(alias, gemmaModels);
-    case 'gemma2':
-      return resolveGemma2Model(alias, gemmaModels);
-    default:
-      return undefined;
-  }
-}
-
-function resolveGemma4Model(alias: string, models: LocalModel[]): string | undefined {
-  const gemma4Models = models.filter(m => /gemma[\s-]*4/i.test(m.id));
   switch (alias) {
     case 'gemma4':
       return gemma4Models.find(m => /26b/i.test(m.id))?.id
         ?? gemma4Models[gemma4Models.length - 1]?.id;
-    case 'gemma4:26b':
+    case 'gemma4-26b':
       return gemma4Models.find(m => /26b|26/.test(m.id))?.id;
-    case 'gemma4:31b':
+    case 'gemma4-31b':
       return gemma4Models.find(m => /31b|31/.test(m.id) && !/cloud/i.test(m.id))?.id;
-    case 'gemma4:31b-cloud':
+    case 'gemma4-31b-cloud':
       return gemma4Models.find(m => /31b|31/.test(m.id) && /cloud/i.test(m.id))?.id;
-    case 'gemma4:e4b':
+    case 'gemma4-e4b':
       return gemma4Models.find(m => /e4b/i.test(m.id))?.id;
-    default:
-      return undefined;
-  }
-}
-
-function resolveGemma3Model(alias: string, models: LocalModel[]): string | undefined {
-  const gemma3Models = models.filter(m => /gemma[\s-]*3/i.test(m.id));
-  switch (alias) {
-    case 'gemma3':
-      return gemma3Models[gemma3Models.length - 1]?.id;
-    case 'gemma3:27b':
-      return gemma3Models.find(m => /27b|27/.test(m.id))?.id;
-    case 'gemma3:12b':
-      return gemma3Models.find(m => /12b|12/.test(m.id))?.id;
-    case 'gemma3:4b':
-      return gemma3Models.find(m => /4b|4/.test(m.id))?.id;
-    case 'gemma3:1b':
-      return gemma3Models.find(m => /1b|1/.test(m.id))?.id;
-    default:
-      return undefined;
-  }
-}
-
-function resolveGemma2Model(alias: string, models: LocalModel[]): string | undefined {
-  const gemma2Models = models.filter(m => /gemma[\s-]*2/i.test(m.id));
-  switch (alias) {
-    case 'gemma2':
-      return gemma2Models[gemma2Models.length - 1]?.id;
-    case 'gemma2:27b':
-      return gemma2Models.find(m => /27b|27/.test(m.id))?.id;
-    case 'gemma2:9b':
-      return gemma2Models.find(m => /9b|9/.test(m.id))?.id;
-    case 'gemma2:2b':
-      return gemma2Models.find(m => /2b|2/.test(m.id))?.id;
+    case 'gemma4-e2b':
+      return gemma4Models.find(m => /e2b/i.test(m.id))?.id;
     default:
       return undefined;
   }
@@ -1377,7 +1289,7 @@ model ID matters for discovery.
 
 ## 7. User Experience
 
-### 6.1 Zero-Config Local Profile (Auto-Detect & Suggest)
+### 7.1 Zero-Config Local Profile (Auto-Detect & Suggest)
 
 On startup, gemini-cli should **automatically probe** for available local Gemma
 inference backends and **propose a local profile as the default** when Gemma 4
@@ -1393,18 +1305,18 @@ CLI Startup (before displaying any UI)
   │     ├── GET http://localhost:8000/v1/models  → 200?  → vLLM available
   │     └── GET http://localhost:30000/v1/models → 200?  → SGLang available
   │
-  ├── 2. If backend found → filter for Gemma models
-  │     ├── GET {baseUrl}/v1/models
-  │     ├── Match IDs containing 'gemma' (case-insensitive)
-  │     └── If any Gemma models found → local profile available
-  │
-  ├── 3. Auto-select default model per backend
-  │     ├── Ollama: prefer gemma4:26b (MoE, 256K ctx) if pulled, else gemma4:e4b
-  │     ├── LM Studio: google/gemma-4-26b-a4b if loaded, else scan downloaded models
-  │     ├── Llama.cpp / vLLM / SGLang: largest Gemma 4 model available
-  │     └── Fallback: any Gemma model (3, 2, etc.) detected
-  │
-  └── 4. Propose local profile in UI
+   ├── 2. If backends found → probe each for Gemma 4 models (in parallel)
+   │     ├── GET {baseUrl}/v1/models for each responding backend
+   │     ├── Match IDs containing 'gemma' AND '4' (case-insensitive)
+   │     ├── Group discovered models by provider (Ollama, LM Studio, Llama.cpp, vLLM, SGLang)
+   │     └── If any Gemma 4 models found → local profile available
+   │
+   ├── 3. Auto-select default model across all detected backends
+   │     ├── Prefer Ollama → gemma4:26b (MoE, 256K ctx) if pulled, else gemma4:e4b
+   │     ├── If no Ollama → LM Studio: google/gemma-4-26b-a4b if loaded
+   │     └── Fallback: largest Gemma 4 model from any backend (Llama.cpp/vLLM/SGLang)
+   │
+   └── 4. Propose local profile in UI (grouped by provider)
         ├── Banner at top of session:
         │   "Local Gemma 4 detected! Using gemma4:26b via Ollama (256K context, offline, free)."
         │   "Press Esc for settings or /model to switch."
@@ -1413,7 +1325,16 @@ CLI Startup (before displaying any UI)
         │   No API key prompt. No OAuth browser flow.
         │
         ├── ModelDialog default selection: Gemma 4 family highlighted
-        │   Group header: "Local (offline)" with all detected Gemma models
+        │   Group header: "Local (offline)" with sub-groups per provider:
+        │     ├── Ollama
+        │     │     ├── gemma4:26b (18 GB, Q4_K_M, 256K ctx)
+        │     │     ├── gemma4:e4b  (9.6 GB, Q4_K_M, 128K ctx)
+        │     │     └── gemma4:e2b  (7.2 GB, Q4_K_M, 128K ctx)
+        │     ├── LM Studio
+        │     │     └── google/gemma-4-26b-a4b
+        │     ├── Llama.cpp (if available)
+        │     ├── vLLM (if available)
+        │     └── SGLang (if available)
         │   Group header: "Cloud (Google API)" with gemini models below
         │
         └── Footer indicator: "🖥️ Local · gemma4:26b · Ollama" or similar
@@ -1425,7 +1346,7 @@ background on each startup and re-checks periodically (every 30 minutes) without
 blocking the UI. If a backend becomes available later, a notification appears:
 "Ollama detected! Switch to local Gemma 4? [Y/n]".
 
-### 6.2 Commands & CLI Usage
+### 7.2 Commands & CLI Usage
 
 ```bash
 # Start with local Gemma 4 via Ollama
@@ -1438,10 +1359,10 @@ gemini -m gemma4 --local-backend lm-studio
 GEMINI_LOCAL_BACKEND=ollama gemini -m gemma4
 
 # Use the larger 31B model (Ollama only)
-gemini -m gemma4:31b --local-backend ollama
+gemini -m gemma4-31b --local-backend ollama
 ```
 
-### 6.2 Settings Configuration
+### 7.3 Settings Configuration
 
 In `~/.gemini/settings.json`:
 
@@ -1457,23 +1378,53 @@ In `~/.gemini/settings.json`:
     "baseUrl": "http://localhost:11434/v1",
     "modelMapping": {
       "gemma4": "gemma4:26b",
-      "gemma4:31b": "gemma4:31b"
+      "gemma4-31b": "gemma4:31b"
     }
   }
 }
 ```
 
-### 6.3 Model Dialog
+### 7.4 Model Dialog
 
 The TUI model selector (`packages/cli/src/ui/components/ModelDialog.tsx`) should
-list available local Gemma 4 models when a local backend is active, filtered by
-what the backend supports.
+list available local Gemma 4 models **grouped by provider** when a local backend
+is active, filtered by what each backend supports.
+
+```
+Local (offline)
+  ├── Ollama                  ← backend status: ● running / ○ not detected
+  │     ├── gemma4:26b        ← default, highlighted when auto-selected
+  │     ├── gemma4:e4b
+  │     └── gemma4:e2b
+  ├── LM Studio               ← backend status: ● running
+  │     ├── google/gemma-4-26b-a4b
+  │     └── google/gemma-4-31b-it
+  ├── Llama.cpp               ← backend status: ○ not running
+  ├── vLLM                    ← backend status: ○ not running
+  └── SGLang                  ← backend status: ○ not running
+
+Cloud (Google API)
+  ├── gemini-2.5-flash
+  └── ...
+```
+
+- **Backend status indicator**: Each provider group header shows a live status
+  dot (● running, ○ not detected, ◐ connecting)
+- **Provider-specific model metadata**: Size, quantization, context length shown
+  inline per model (varies per backend since different quantizations may be
+  loaded)
+- **Unavailable backends**: Shown greyed out with status ○ — user can see which
+  backends are available without having to read logs
+- **Cross-backend dedup**: If the same model variant is available on multiple
+  backends (e.g., Gemma 4 26B on both Ollama and Llama.cpp), both entries are
+  shown under their respective providers with the provider-specific
+  size/metadata
 
 ---
 
 ## 8. Error Handling
 
-### 7.1 Backend Not Available
+### 8.1 Backend Not Available
 
 If the selected local backend is not running:
 
@@ -1482,7 +1433,7 @@ Error: Ollama is not running. Please start Ollama and try again.
        See: https://ollama.com/download
 ```
 
-### 7.2 Unsupported Model per Backend
+### 8.2 Unsupported Model per Backend
 
 If the user requests a model variant not supported by their backend:
 
@@ -1491,7 +1442,7 @@ Warning: gemma4-31b is not available for LM Studio.
          Falling back to gemma4-26b.
 ```
 
-### 7.3 Model Not Pulled (Ollama)
+### 8.3 Model Not Pulled (Ollama)
 
 If the requested Ollama model is not yet pulled:
 
