@@ -1,0 +1,1595 @@
+# Local Gemma 4 Support PRD
+
+**Version:** 0.1.0-draft **Date:** 2026-05-02 **Branch:**
+`feat/add-local-gemma-4-support` **Reference Implementation:**
+`upstream/feat/add-gemma-4-31b-it-support`
+
+---
+
+## 1. Overview
+
+### 1.1 Purpose
+
+Add support for local inference of Gemma 4 models via popular local LLM
+backends: **Llama.cpp**, **LM Studio**, **Ollama**, **vLLM**, and **SGLang**.
+This enables developers to run Gemma 4 models entirely offline without requiring
+Google API access.
+
+### 1.2 Motivation
+
+- **Privacy**: Run Gemma 4 without sending data to external APIs
+- **Offline**: Work without internet connectivity
+- **Cost**: No API quota limits when running locally
+- **Ecosystem**: Support the major local inference tools developers already use
+
+### 1.3 Gemma 4 Capabilities
+
+Gemma 4 introduces key capability and architectural advancements:
+
+- **Extended Multimodalities** — Processes Text, Image with variable aspect
+  ratio and resolution support (all models)
+- **Edge models** (E2B, E4B) additionally support **Audio** input
+- **Configurable thinking** via `<|think|>` system prompt control token — all
+  models are designed as highly capable reasoners
+- **Native function calling** — enhanced coding & agentic capabilities, powering
+  autonomous agents
+- **Hybrid attention architecture** — interleaves local sliding-window layers
+  with global-attention layers for fast processing and low memory footprint
+  while maintaining deep long-context awareness
+
+### 1.4 Reference
+
+The upstream branch `feat/add-gemma-4-31b-it-support` demonstrates the pattern
+for adding Gemma 4 model support to the CLI. This PRD extends that pattern to
+local inference backends.
+
+---
+
+## 2. Supported Backends & Model Discovery
+
+### 2.1 Backends
+
+All five backends expose standard OpenAI-compatible `GET /v1/models` endpoint
+for **dynamic model discovery**. No hardcoded model names.
+
+| Backend       | Default API Base URL        | `GET /v1/models` Support | Notes                                  |
+| ------------- | --------------------------- | ------------------------ | -------------------------------------- |
+| **Ollama**    | `http://localhost:11434/v1` | Yes                      | OpenAI-compatible mode                 |
+| **LM Studio** | `http://localhost:1234/v1`  | Yes                      | Developer mode / REST API enabled      |
+| **Llama.cpp** | `http://localhost:8080/v1`  | Yes                      | Built-in OpenAI-compatible server      |
+| **vLLM**      | `http://localhost:8000/v1`  | Yes                      | Production-grade OpenAI-compatible API |
+| **SGLang**    | `http://localhost:30000/v1` | Yes                      | High-throughput OpenAI-compatible API  |
+
+### 2.2 Dynamic Model Discovery Flow
+
+```
+Startup / --local-backend <name>
+    │
+    ├── Auto-detect backend (probe known default URLs)
+    │     ├── GET http://localhost:11434/v1/models → 200 OK → Ollama
+    │     ├── GET http://localhost:1234/v1/models  → 200 OK → LM Studio
+    │     ├── GET http://localhost:8080/v1/models  → 200 OK → Llama.cpp
+    │     ├── GET http://localhost:8000/v1/models  → 200 OK → vLLM
+    │     └── GET http://localhost:30000/v1/models → 200 OK → SGLang
+    │
+    └── Discover Gemma models (all families: Gemma 2, 3, 4, etc.)
+          ├── GET {baseUrl}/v1/models
+          ├── Filter by Gemma family patterns:
+          │     - Contains 'gemma' (case-insensitive)
+          │     - Exclude: embedding-only models, functiongemma
+          ├── Group by family (gemma2, gemma3, gemma4)
+          ├── Map discovered IDs to aliases per family:
+          │     gemma4 → 26B variant (default), 31B, 31B-cloud
+          │     gemma3 → 12B, 27B, etc.
+          │     gemma2 → 2B, 9B, 27B, etc.
+          └── Expose all discovered Gemma models in ModelDialog and CLI
+```
+
+### 2.3 Model Name Resolution Strategy
+
+Model IDs are **never hardcoded** — instead, the system:
+
+1. **Discovers** all models via `GET /v1/models` → returns
+   `{ data: [{ id: "name", ... }] }`
+2. **Filters** by Gemma family using pattern matching (all generations: Gemma 2,
+   3, 4, etc.)
+3. **Groups** models by family for organized UI presentation
+4. **Maps** discovered IDs to CLI aliases heuristically per family:
+
+**Gemma 4 family — 29 models on Ollama (verified against
+ollama.com/library/gemma4/tags):**
+
+**Base alias → defaults (what user gets with `gemini -m gemma4`):** | Alias |
+Ollama Tag | Type | Params | Size | Context | Modality | | --- | --- | --- | ---
+| --- | --- | --- | | `gemma4` | `gemma4:latest` (= `e4b`) | Edge dense | 4.5B
+eff / 8B total | 9.6 GB | 128K | Text, Image |
+
+**Complete tag inventory (29 models across 4 base variants × multiple
+quantizations):**
+
+```
+Base variant: gemma4:e2b (edge, 2.3B effective / 5.1B total, 35 layers, 128K ctx)
+├── gemma4:e2b (= it-q4_K_M)          7.2 GB  Q4_K_M    Text, Image  — default
+├── gemma4:e2b-it-q4_K_M              7.2 GB  Q4_K_M    Text, Image
+├── gemma4:e2b-it-q8_0                8.1 GB  Q8_0      Text, Image
+├── gemma4:e2b-it-bf16                 10 GB  BF16      Text, Image
+├── gemma4:e2b-mlx-bf16                10 GB  MLX BF16  Text
+├── gemma4:e2b-mxfp8                  7.9 GB  MXFP8     Text
+└── gemma4:e2b-nvfp4                  7.1 GB  NVFP4     Text
+
+Base variant: gemma4:e4b (edge, 4.5B effective / 8B total, 42 layers, 128K ctx)
+├── gemma4:e4b (= it-q4_K_M)          9.6 GB  Q4_K_M    Text, Image  — default
+├── gemma4:e4b (= latest)             9.6 GB  Q4_K_M    Text, Image  — gemma4 alias
+├── gemma4:e4b-it-q4_K_M              9.6 GB  Q4_K_M    Text, Image
+├── gemma4:e4b-it-q8_0                 12 GB  Q8_0      Text, Image
+├── gemma4:e4b-it-bf16                 16 GB  BF16      Text, Image
+├── gemma4:e4b-mlx-bf16                16 GB  MLX BF16  Text
+├── gemma4:e4b-mxfp8                   11 GB  MXFP8     Text
+└── gemma4:e4b-nvfp4                  9.6 GB  NVFP4     Text
+
+Base variant: gemma4:26b (workstation MoE, 25.2B total / 3.8B active, 30 layers, 256K ctx)
+├── gemma4:26b (= it-q4_K_M)           18 GB  Q4_K_M    Text, Image  — default
+├── gemma4:26b-a4b-it-q4_K_M           18 GB  Q4_K_M    Text, Image
+├── gemma4:26b-a4b-it-q8_0             28 GB  Q8_0      Text, Image
+├── gemma4:26b-mlx-bf16                52 GB  MLX BF16  Text
+├── gemma4:26b-mxfp8                   27 GB  MXFP8     Text
+└── gemma4:26b-nvfp4                   17 GB  NVFP4     Text
+
+Base variant: gemma4:31b (workstation dense, 30.7B, 60 layers, 256K ctx)
+├── gemma4:31b (= it-q4_K_M)           20 GB  Q4_K_M    Text, Image  — default
+├── gemma4:31b-it-q4_K_M               20 GB  Q4_K_M    Text, Image
+├── gemma4:31b-it-q8_0                 34 GB  Q8_0      Text, Image
+├── gemma4:31b-it-bf16                 63 GB  BF16      Text, Image
+├── gemma4:31b-mlx-bf16                63 GB  MLX BF16  Text
+├── gemma4:31b-mxfp8                   32 GB  MXFP8     Text
+└── gemma4:31b-nvfp4                   20 GB  NVFP4     Text
+
+Cloud: gemma4:31b-cloud (Ollama hosted, 30.7B, 256K ctx, Text+Image, no local size)
+```
+
+**Quantization tier impact on gemini-cli behavior:**
+
+| Quantization | Quality vs BF16        | VRAM/disk savings | CLI impact                                               |
+| ------------ | ---------------------- | ----------------- | -------------------------------------------------------- |
+| Q4_K_M       | Good (~95% quality)    | ~3.3× smaller     | Default for all models. Best balance of quality/size     |
+| Q8_0         | Better (~99% quality)  | ~2× smaller       | Recommended for code tasks (higher precision for syntax) |
+| BF16         | Reference (100%)       | 1× (original)     | Best quality, worst size. Only for ample VRAM systems    |
+| MLX BF16     | Reference (macOS only) | 1×                | Apple Silicon optimized. Text-only (no vision)           |
+| MXFP8        | Good                   | ~2× smaller       | Optimized for modern GPUs                                |
+| NVFP4        | Good                   | ~3× smaller       | NVIDIA GPU optimized                                     |
+
+**Default selection logic** — when `gemma4` alias is used, gemini-cli should:
+
+1. Prefer `gemma4:26b` (MoE, 256K context, 77% code benchmark) if available and
+   VRAM ≥ 16 GB
+2. Fall back to `gemma4:e4b` (current `gemma4:latest` — 128K context, 52% code
+   benchmark)
+3. List `gemma4:31b` as recommended upgrade if VRAM ≥ 24 GB
+4. List `gemma4:e2b` for constrained devices (VRAM ≥ 8 GB)
+
+- **Thinking**: Configurable via `<|think|>` token in system prompt (all models
+  are designed as highly capable reasoners)
+- **Native function calling**: Enhanced coding & agentic capabilities, powering
+  autonomous agents
+- **Native system role**: Supports `system`, `assistant`, `user` roles natively
+- **Vision**: Text + Image input (variable aspect ratio, configurable token
+  budgets: 70, 140, 280, 560, 1120)
+- **Generation defaults**: temperature=1.0, top_p=0.95, top_k=64 (recommended by
+  Google)
+- **Tokenizer**: 262K vocabulary, same tokenizer across all sizes
+
+**Per-variant suitability for gemini-cli:**
+
+| Variant            | Code Gen                                       | Tool Use                     | Reasoning                  | Edge Use             | Recommendation                                                      |
+| ------------------ | ---------------------------------------------- | ---------------------------- | -------------------------- | -------------------- | ------------------------------------------------------------------- |
+| `gemma4:e2b`       | Minimal (44% LiveCodeBench, 633 Codeforces)    | Basic                        | Yes, configurable thinking | Laptops/phones       | **Include** — basic editing, simple file ops. Lightweight CLI tasks |
+| `gemma4:e4b`       | Moderate (52% LiveCodeBench, 940 Codeforces)   | Yes, GQA + function calling  | Yes, configurable thinking | Laptops              | **Include** — lightweight coding, file editing, shell automation    |
+| `gemma4:26b`       | Strong (77.1% LiveCodeBench, 1718 Codeforces)  | Yes, native function calling | Yes, configurable thinking | Workstation GPU      | **Include** — primary coding model, MoE efficiency                  |
+| `gemma4:31b`       | Excellent (80% LiveCodeBench, 2150 Codeforces) | Yes, native function calling | Yes, configurable thinking | High-end workstation | **Include** — best-in-class local coding, complex agentic tasks     |
+| `gemma4:31b-cloud` | Excellent (same as 31B)                        | Yes, remote inference        | Yes, configurable thinking | Cloud                | **Include** — Ollama cloud-hosted, no local GPU needed              |
+
+**Gemma 3 family (auto-discovered):** | Alias | Resolution Rule | | --- | --- |
+| `gemma3` | Largest detected Gemma 3 model | | `gemma3:12b` | Detected model
+with `12b` or `12` in name | | `gemma3:27b` | Detected model with `27b` or `27`
+in name | | `gemma3:4b` | Detected model with `4b` or `4` in name | |
+`gemma3:1b` | Detected model with `1b` or `1` in name |
+
+**Gemma 2 family (auto-discovered):** | Alias | Resolution Rule | | --- | --- |
+| `gemma2` | Largest detected Gemma 2 model | | `gemma2:27b` | Detected model
+with `27b` or `27` in name | | `gemma2:9b` | Detected model with `9b` or `9` in
+name | | `gemma2:2b` | Detected model with `2b` or `2` in name |
+
+If no Gemma models are discovered, the system falls back to listing **all
+available models** and lets the user pick any.
+
+---
+
+## 3. Architecture Integration
+
+### 3.1 AuthType Extension
+
+Add new auth types to the `AuthType` enum in
+`packages/core/src/core/contentGenerator.ts`:
+
+```typescript
+export enum AuthType {
+  LOGIN_WITH_GOOGLE = 'oauth-personal',
+  USE_GEMINI = 'gemini-api-key',
+  USE_VERTEX_AI = 'vertex-ai',
+  LEGACY_CLOUD_SHELL = 'cloud-shell',
+  COMPUTE_ADC = 'compute-default-credentials',
+  GATEWAY = 'gateway',
+  // NEW: Local inference backends
+  USE_LOCAL_OLLAMA = 'local-ollama',
+  USE_LOCAL_LM_STUDIO = 'local-lm-studio',
+  USE_LOCAL_LLAMA_CPP = 'local-llama-cpp',
+  USE_LOCAL_VLLM = 'local-vllm',
+  USE_LOCAL_SGLANG = 'local-sglang',
+}
+```
+
+### 3.2 Environment Variable Detection
+
+Add detection in `getAuthTypeFromEnv()`:
+
+```typescript
+if (
+  process.env['GEMINI_LOCAL_BACKEND'] === 'ollama' ||
+  process.env['OLLAMA_HOST']
+) {
+  return AuthType.USE_LOCAL_OLLAMA;
+}
+if (
+  process.env['GEMINI_LOCAL_BACKEND'] === 'lm-studio' ||
+  process.env['LM_STUDIO_API_BASE']
+) {
+  return AuthType.USE_LOCAL_LM_STUDIO;
+}
+if (
+  process.env['GEMINI_LOCAL_BACKEND'] === 'llama-cpp' ||
+  process.env['LLAMA_CPP_SERVER_BASE']
+) {
+  return AuthType.USE_LOCAL_LLAMA_CPP;
+}
+if (
+  process.env['GEMINI_LOCAL_BACKEND'] === 'vllm' ||
+  process.env['VLLM_API_BASE']
+) {
+  return AuthType.USE_LOCAL_VLLM;
+}
+if (
+  process.env['GEMINI_LOCAL_BACKEND'] === 'sglang' ||
+  process.env['SGLANG_API_BASE']
+) {
+  return AuthType.USE_LOCAL_SGLANG;
+}
+```
+
+### 3.3 Content Generator Creation
+
+Add new paths in `createContentGenerator()`:
+
+```
+createContentGenerator() {
+  ├── LOGIN_WITH_GOOGLE/COMPUTE_ADC (existing)
+  ├── USE_GEMINI/USE_VERTEX_AI/GATEWAY (existing)
+  └── NEW: USE_LOCAL_OLLAMA/USE_LOCAL_LM_STUDIO/USE_LOCAL_LLAMA_CPP/USE_LOCAL_VLLM/USE_LOCAL_SGLANG
+       └── LocalContentGenerator (OpenAI-compatible API via GoogleGenAI)
+}
+```
+
+**Implementation approach**: All five local backends expose OpenAI-compatible
+`/v1/chat/completions` endpoints. We create a single `LocalContentGenerator` (or
+direct `GoogleGenAI` instance with custom `baseUrl`) that works across all five:
+
+| Backend   | Default Base URL            |
+| --------- | --------------------------- |
+| Ollama    | `http://localhost:11434/v1` |
+| LM Studio | `http://localhost:1234/v1`  |
+| Llama.cpp | `http://localhost:8080/v1`  |
+
+These base URLs are configurable via environment variables:
+
+- `OLLAMA_HOST` for Ollama (default: `http://localhost:11434/v1`)
+- `LM_STUDIO_API_BASE` for LM Studio (default: `http://localhost:1234/v1`)
+- `LLAMA_CPP_SERVER_BASE` for Llama.cpp (default: `http://localhost:8080/v1`)
+- `VLLM_API_BASE` for vLLM (default: `http://localhost:8000/v1`)
+- `SGLANG_API_BASE` for SGLang (default: `http://localhost:30000/v1`)
+
+### 3.4 Auth Validation
+
+Update `packages/cli/src/config/auth.ts` to handle new auth types:
+
+```typescript
+case AuthType.USE_LOCAL_OLLAMA:
+case AuthType.USE_LOCAL_LM_STUDIO:
+case AuthType.USE_LOCAL_LLAMA_CPP:
+case AuthType.USE_LOCAL_VLLM:
+case AuthType.USE_LOCAL_SGLANG:
+  return null; // No API key required for local backends
+```
+
+### 3.5 Settings Schema
+
+Update `packages/cli/src/config/settingsSchema.ts` to add local backend
+configuration:
+
+```typescript
+localBackend: {
+  type: 'object',
+  label: 'Local LLM Backend',
+  properties: {
+    backend: {
+      type: 'string',
+      enum: ['ollama', 'lm-studio', 'llama-cpp', 'vllm', 'sglang'],
+      description: 'Local inference backend to use',
+    },
+    baseUrl: {
+      type: 'string',
+      description: 'Override base URL for the backend API',
+    },
+    modelMapping: {
+      type: 'object',
+      description: 'Custom model name mappings per alias',
+      properties: {
+        gemma4: { type: 'string' },
+        gemma4_26b: { type: 'string' },
+        gemma4_31b: { type: 'string' },
+        gemma4_31b_cloud: { type: 'string' },
+        gemma4_e4b: { type: 'string' },
+        gemma4_e2b: { type: 'string' },
+      },
+    },
+  },
+},
+```
+
+---
+
+## 4. Model Configuration (Dynamic Discovery)
+
+### 4.1 Model Definitions (Dynamic)
+
+Add to `packages/core/src/config/defaultModelConfigs.ts` under
+`modelDefinitions`. All model IDs are resolved dynamically at runtime:
+
+```typescript
+// Gemma 4 family
+'gemma4': {
+  tier: 'custom',
+  family: 'gemma-4',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: true, multimodalToolUse: false },
+},
+'gemma4:26b': {
+  tier: 'custom',
+  family: 'gemma-4',
+  isPreview: false,
+  isVisible: false,       // Hidden alias, only shown when 26B model detected
+  features: { thinking: true, multimodalToolUse: false },
+},
+'gemma4:31b': {
+  tier: 'custom',
+  family: 'gemma-4',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: true, multimodalToolUse: false },
+},
+'gemma4:31b-cloud': {
+  tier: 'custom',
+  family: 'gemma-4',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: true, multimodalToolUse: false },
+},
+'gemma4:e4b': {
+  tier: 'custom',
+  family: 'gemma-4',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: true, multimodalToolUse: false },
+},
+'gemma4:e2b': {
+  tier: 'custom',
+  family: 'gemma-4',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: true, multimodalToolUse: false },
+},
+
+// Gemma 3 family (auto-discovered when available)
+'gemma3': {
+  tier: 'custom',
+  family: 'gemma-3',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma3:27b': {
+  tier: 'custom',
+  family: 'gemma-3',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma3:12b': {
+  tier: 'custom',
+  family: 'gemma-3',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma3:4b': {
+  tier: 'custom',
+  family: 'gemma-3',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma3:1b': {
+  tier: 'custom',
+  family: 'gemma-3',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+
+// Gemma 2 family (auto-discovered when available)
+'gemma2': {
+  tier: 'custom',
+  family: 'gemma-2',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma2:27b': {
+  tier: 'custom',
+  family: 'gemma-2',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma2:9b': {
+  tier: 'custom',
+  family: 'gemma-2',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+'gemma2:2b': {
+  tier: 'custom',
+  family: 'gemma-2',
+  isPreview: false,
+  isVisible: true,
+  features: { thinking: false, multimodalToolUse: false },
+},
+```
+
+### 4.2 Model Configs (Same Generation Config, Model Field Is Placeholder)
+
+Add to `aliases` section in `defaultModelConfigs.ts`. The `model` field below is
+a **placeholder** — it gets replaced at runtime with the actual discovered model
+ID:
+
+```typescript
+gemma4: {
+  extends: 'base',
+  modelConfig: {
+    model: '__DISCOVERED_GEMMA4__',   // Replaced at runtime by LocalModelService
+    generateContentConfig: {
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    },
+  },
+},
+'gemma4-26b': {
+  extends: 'base',
+  modelConfig: {
+    model: '__DISCOVERED_GEMMA4_26B__',
+    generateContentConfig: {
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    },
+  },
+},
+'gemma4-31b': {
+  extends: 'base',
+  modelConfig: {
+    model: '__DISCOVERED_GEMMA4_31B__',
+    generateContentConfig: {
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    },
+  },
+},
+'gemma4-31b-cloud': {
+  extends: 'base',
+  modelConfig: {
+    model: '__DISCOVERED_GEMMA4_31B_CLOUD__',
+    generateContentConfig: {
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    },
+  },
+},
+'gemma4-e2b': {
+  extends: 'base',
+  modelConfig: {
+    model: '__DISCOVERED_GEMMA4_E2B__',
+    generateContentConfig: {
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    },
+  },
+},
+'gemma4-e4b': {
+  extends: 'base',
+  modelConfig: {
+    model: '__DISCOVERED_GEMMA4_E4B__',
+    generateContentConfig: {
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    },
+  },
+},
+```
+
+### 4.3 Runtime Model ID Resolution
+
+Model IDs are **not hardcoded** in `modelIdResolutions`. Instead,
+`LocalModelService` intercepts and resolves them at runtime:
+
+```
+User runs: gemini -m gemma4 --local-backend ollama
+
+1. Config detects authType = USE_LOCAL_OLLAMA
+2. LocalModelService.discoverModels('ollama')
+     → GET http://localhost:11434/v1/models
+     → Response: { data: [ { id: "gemma4:14b" }, { id: "gemma4:26b" }, { id: "gemma4:31b" } ] }
+3. Filter to Gemma 4 models: ["gemma4:e2b", "gemma4:e4b", "gemma4:26b", "gemma4:31b"]
+4. resolveModel("gemma4") → "gemma4:26b" (largest non-cloud Gemma 4 model preferred)
+5. createContentGeneratorConfig() → baseUrl = "http://localhost:11434/v1", model = "gemma4:26b"
+```
+
+### 4.4 Model Constants
+
+Add to `packages/core/src/config/models.ts`:
+
+```typescript
+// Gemma 4
+export const GEMMA_MODEL_ALIAS_4 = 'gemma4';
+export const GEMMA_MODEL_ALIAS_4_26B = 'gemma4:26b';
+export const GEMMA_MODEL_ALIAS_4_31B = 'gemma4:31b';
+export const GEMMA_MODEL_ALIAS_4_31B_CLOUD = 'gemma4:31b-cloud';
+export const GEMMA_MODEL_ALIAS_4_E4B = 'gemma4:e4b';
+export const GEMMA_MODEL_ALIAS_4_E2B = 'gemma4:e2b';
+
+// Gemma 3
+export const GEMMA_MODEL_ALIAS_3 = 'gemma3';
+export const GEMMA_MODEL_ALIAS_3_27B = 'gemma3:27b';
+export const GEMMA_MODEL_ALIAS_3_12B = 'gemma3:12b';
+export const GEMMA_MODEL_ALIAS_3_4B = 'gemma3:4b';
+export const GEMMA_MODEL_ALIAS_3_1B = 'gemma3:1b';
+
+// Gemma 2
+export const GEMMA_MODEL_ALIAS_2 = 'gemma2';
+export const GEMMA_MODEL_ALIAS_2_27B = 'gemma2:27b';
+export const GEMMA_MODEL_ALIAS_2_9B = 'gemma2:9b';
+export const GEMMA_MODEL_ALIAS_2_2B = 'gemma2:2b';
+
+// All local Gemma aliases (for detection in ModelDialog, etc.)
+export const LOCAL_GEMMA_ALIASES = new Set([
+  GEMMA_MODEL_ALIAS_4,
+  GEMMA_MODEL_ALIAS_4_26B,
+  GEMMA_MODEL_ALIAS_4_31B,
+  GEMMA_MODEL_ALIAS_4_31B_CLOUD,
+  GEMMA_MODEL_ALIAS_4_E4B,
+  GEMMA_MODEL_ALIAS_4_E2B,
+  GEMMA_MODEL_ALIAS_3,
+  GEMMA_MODEL_ALIAS_3_27B,
+  GEMMA_MODEL_ALIAS_3_12B,
+  GEMMA_MODEL_ALIAS_3_4B,
+  GEMMA_MODEL_ALIAS_3_1B,
+  GEMMA_MODEL_ALIAS_2,
+  GEMMA_MODEL_ALIAS_2_27B,
+  GEMMA_MODEL_ALIAS_2_9B,
+  GEMMA_MODEL_ALIAS_2_2B,
+]);
+```
+
+---
+
+## 5. Verified Discovery Results (Local Machine, 2026-05-02)
+
+### 5.1 LM Studio (http://127.0.0.1:1234)
+
+```json
+{
+  "data": [
+    {
+      "id": "google/gemma-4-26b-a4b",
+      "object": "model",
+      "owned_by": "organization_owner"
+    },
+    {
+      "id": "qwen/qwen3.5-9b",
+      "object": "model",
+      "owned_by": "organization_owner"
+    },
+    {
+      "id": "text-embedding-nomic-embed-text-v1.5",
+      "object": "model",
+      "owned_by": "organization_owner"
+    }
+  ],
+  "object": "list"
+}
+```
+
+**Available Gemma 4 models in LM Studio:** | Discovered ID | Maps to Alias | |
+--- | --- | | `google/gemma-4-26b-a4b` | `gemma4`, `gemma4:26b` |
+
+Note: LM Studio currently only has the 26B MoE variant loaded. Other Gemma 4
+variants can be downloaded via LM Studio's model browser (search "gemma-4" on
+HuggingFace).
+
+### 5.2 Ollama (http://localhost:11434)
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "gemma4:26b", "owned_by": "library" },
+    { "id": "gemma4:e4b", "owned_by": "library" },
+    { "id": "gemma4:31b-cloud", "owned_by": "library" },
+    ...
+  ]
+}
+```
+
+**Available Gemma 4 models in Ollama (locally pulled):** | Discovered ID | Maps
+to Alias | Type | | --- | --- | --- | | `gemma4:26b` | `gemma4`, `gemma4:26b` |
+MoE 25.2B / 3.8B active | | `gemma4:e4b` | `gemma4:e4b` | Dense 4.5B eff / 8B
+total | | `gemma4:31b-cloud` | `gemma4:31b-cloud` | Dense 30.7B (cloud) |
+
+**Not yet pulled locally but available in Ollama library:** | Model | Type | |
+--- | --- | | `gemma4:e2b` | Dense 2.3B eff / 5.1B total (pulling in background
+now) | | `gemma4:31b` | Dense 30.7B local (not cloud) |
+
+### 5.3 Llama.cpp (http://localhost:8080)
+
+**Not running** on this machine — server returned HTML page. Discovery will fail
+gracefully and report the backend as unavailable.
+
+### 7.4 Metadata Model & Auto-Tuning Map
+
+```typescript
+// packages/core/src/services/localModelDiscovery.ts
+
+interface LocalModelMetadata {
+  id: string;
+  displayName: string;
+  backendId: string;
+
+  // Context
+  contextLength: number; // max token context window
+
+  // Modality
+  supportsVision: boolean; // multimodal image input
+  supportsAudio: boolean; // multimodal audio input
+
+  // Reasoning
+  supportsReasoning: boolean; // built-in CoT/thinking
+
+  // Thinking Mode Configuration (reasoning/chain-of-thought)
+  thinkingConfig: {
+    enabled: boolean;
+    // All Gemma 4 models are designed as highly capable reasoners
+    // with configurable thinking modes via <|think|> control token.
+    nativeThinking: true; // YES — all Gemma 4 variants support native thinking
+
+    // How thinking is implemented for this model
+    implementation: 'native-token'; // Gemma 4 uses <|think|> system prompt token
+    // The <|think|> token at the start of the system prompt enables thinking.
+    // When enabled, output format:
+    //   <|channel>thought\n[Internal reasoning]<channel|>[Final answer]
+    // When thinking disabled (remove <|think|> from system prompt):
+    //   E2B/E4B: no thinking tags produced
+    //   26B/31B: still generates <channel> tokens with empty thought block
+
+    // Context budget allocation for thinking
+    maxThinkingTokens: number; // max tokens allocated to reasoning
+    reservedContextForThinking: number; // context window reserved for reasoning
+    visibleReasoningInOutput: boolean; // always true for Gemma 4 (thought block in output)
+    // Ollama handles chat template complexity automatically.
+    // gemini-cli must strip history thought blocks before sending next turn
+    // (per best practice: "No Thinking Content in History").
+    structuredThinkingFormats: string[]; // ['<|channel>thought\n...<channel|>']
+  };
+
+  // Architecture details (enables smart auto-tuning)
+  architecture: ArchitectureProfile;
+
+  // Quick access to key performance indicators
+  paramSize: string; // "25.8B", "32.7B", "8.0B"
+  quantization: string; // "Q4_K_M", "BF16", "FP16"
+
+  // Capabilities
+  supportsToolUse: boolean; // function calling / tool use
+  isLoaded: boolean; // currently loaded in memory (LM Studio)
+}
+
+/** Architecture-aware profile — describes the model's internal structure
+ *  so gemini-cli can optimize context management, batching, and memory usage. */
+interface ArchitectureProfile {
+  family: string; // "gemma4", "gemma3", "qwen35", etc.
+  layerCount: number; // transformer block count (e.g., 30 for gemma4:26b)
+
+  // Attention mechanism — critical for context window utilization
+  attention: {
+    type: 'full' | 'sliding-window' | 'hybrid' | 'dilated';
+
+    // Hybrid attention details (used by all Gemma 4 models)
+    // Interleaves local sliding-window layers with global-attention layers.
+    // This architecture delivers fast processing and low memory footprint
+    // while maintaining deep awareness for complex, long-context tasks.
+    // Key insight: SWA layers use O(window) KV cache, global layers use O(ctx).
+    isHybrid: boolean; // true when sliding + global layers interleaved
+    slidingWindowSize: number; // local attention tokens per SWA layer (e.g., 1024)
+    globalKeyDim: number; // KV dimension for global attention layers (e.g., 512)
+    swaKeyDim: number; // KV dimension for SWA layers (e.g., 256)
+    interleavingPattern?: 'even' | 'front-heavy' | 'back-heavy';
+    // 'even': SWA and global layers alternate (typical for 26B MoE)
+    // 'front-heavy': more SWA in early layers, more global in late layers
+    // 'back-heavy': global attention in late layers for long-range dependencies
+
+    // KV cache estimation — determines actual memory per token
+    kvCacheBytesPerToken: number; // estimated bytes per token for full context
+    kvCacheBytesPerTokenSWA: number; // estimated bytes per token for SWA layers only
+    // Example for gemma4:26b hybrid:
+    //   Global layers: 2 (KV) × 512 dim × 16 heads × 30 layers × 2 bytes = 983,040 bytes
+    //   SWA layers: 2 (KV) × 256 dim × 16 heads × 30 layers × 2 bytes = 491,520 bytes
+    //   Because only 1024 tokens stored per SWA layer, the SWA portion is bounded:
+    //     SWA: 2 × 256 × 16 × 30 × 2 × min(tokens, 1024) bytes
+    //     Global: 2 × 512 × 16 × 30 × 2 × tokens bytes
+  };
+
+  // Mixture-of-Experts (26B variant is MoE, 31B is dense)
+  moe?: {
+    totalExperts: number; // 128 for gemma4:26b
+    activeExpertsPerToken: number; // 8 for gemma4:26b (sparse activation)
+    // MoE advantage: only 8/128 experts active per token → ~6.25% FFN compute
+    // Trade-off: larger memory footprint (all experts loaded in VRAM)
+  };
+
+  // Context utilization characteristics
+  contextProfile: {
+    advertisedLength: number; // 262,144 for gemma4:26b, 256K for 31B
+    effectiveLength: number; // actual usable tokens (hardware-verified)
+    longContextOptimized: boolean; // model designed for deep context awareness
+    // Gemma 4 31B: hybrid attention with interleaved local/global layers
+    // enables 256K context with low memory footprint vs full-attention models
+    contextScaling: 'linear' | 'sub-linear' | 'hybrid-bounded';
+    // 'linear': KV cache grows linearly with context (standard full attention)
+    // 'sub-linear': MoE + SWA limits KV growth (gemma4:26b)
+    // 'hybrid-bounded': SWA portion is bounded, only global layers scale (gemma4:31b)
+  };
+
+  // Prompt template characteristics
+  promptTemplate: {
+    format: 'gemma' | 'llama' | 'chatml' | 'custom';
+    supportsSystemRole: boolean;
+    supportsToolRole: boolean;
+    defaultStopTokens: string[];
+    // Gemma 4 models use a specific RENDERER ("gemma4") and PARSER ("gemma4")
+    // in Ollama, which affects how system prompts and tool calls are formatted.
+  };
+}
+
+interface ModelTuningSettings {
+  // Context management
+  maxContextTokens: number; // derived from contextLength
+  compressionThreshold: number; // when to compress (e.g., 75% of maxContextTokens)
+  tokenWarningThreshold: number; // when to warn user about context limits
+
+  // Generation defaults
+  defaultTemperature: number; // model's native temperature
+  defaultTopK: number; // model's native top_k
+  defaultTopP: number; // model's native top_p
+
+  // Tool settings
+  enableToolUse: boolean; // derived from supportsToolUse
+
+  // Multimodal
+  enableVisionInput: boolean; // derived from supportsVision
+  maxImageResolution: number; // if vision: max patch size × patch_size
+
+  // Thinking/reasoning
+  enableThinking: boolean; // derived from thinkingConfig.nativeThinking
+  thinkingBudget: number; // max thinking tokens (~15% of verified context)
+  thinkingMode: 'native-token' | 'prompt-based' | 'none';
+  // 'native-token': use <|think|> token in system prompt (all Gemma 4 models)
+  // 'prompt-based': fallback for non-Gemma models without native thinking
+  // 'none': disabled entirely
+  stripThinkingHistory: boolean; // strip thought blocks from history before next turn
+  // Per official best practice: "No Thinking Content in History" for multi-turn.
+  // gemini-cli must remove <|channel>thought...<channel|> blocks from history
+  // before sending the next user turn to the model.
+
+  // Performance profiles
+  profile: 'small' | 'medium' | 'large' | 'xl'; // based on paramSize
+  batchTools: boolean; // batch tool calls (for fast models)
+  prefetchContext: boolean; // pre-load context for faster responses
+}
+```
+
+### 7.5 Auto-Tuning Algorithm
+
+```
+function tuneModelFromMetadata(meta: LocalModelMetadata): ModelTuningSettings {
+  // 1. Context size → token budget
+  const maxContextTokens = Math.min(meta.contextLength, 1_000_000);
+  const compressionThreshold = Math.floor(maxContextTokens * 0.75);
+  const tokenWarningThreshold = Math.floor(maxContextTokens * 0.90);
+
+  // 2. Context verification — real available context on local machines is often limited
+  const verifiedContext = verifyAvailableContext(meta, maxContextTokens);
+  // Local GPU VRAM or system RAM heavily constrains actual usable context.
+  // Example: gemma4:26b advertised 256K context, with Q4_K_M quantization
+  // on a 16GB GPU, ~32K tokens may be usable before KV cache overflow.
+  // The verification step probes actual backend capabilities.
+  const effectiveContextTokens = Math.min(maxContextTokens, verifiedContext);
+
+  // 3. Modality features
+  const enableVisionInput = meta.supportsVision;
+  const supportsReasoning = meta.supportsReasoning || meta.architecture?.family === 'gemma4';
+
+  // 4. Thinking mode configuration
+  let enableThinking: boolean;
+  let thinkingBudget: number;
+  let thinkingMode: 'native-token' | 'prompt-based' | 'none';
+  let stripThinkingHistory: boolean;
+
+  if (meta.thinkingConfig?.nativeThinking) {
+    // All Gemma 4 models have native thinking via <|think|> system prompt token
+    thinkingMode = 'native-token';
+    enableThinking = meta.thinkingConfig?.enabled ?? true;
+    thinkingBudget = meta.thinkingConfig.maxThinkingTokens
+      ?? Math.min(Math.floor(effectiveContextTokens * 0.15), 16384);
+    // Must strip thought blocks from history per official best practice:
+    // "No Thinking Content in History" for multi-turn conversations
+    stripThinkingHistory = true;
+  } else {
+    // Non-Gemma models without native thinking
+    thinkingMode = 'none';
+    enableThinking = false;
+    thinkingBudget = 0;
+    stripThinkingHistory = false;
+  }
+
+  // 5. Tool use
+  const enableToolUse = meta.supportsToolUse;
+
+  // 6. Performance profile → batching/prefetch decisions
+  const paramSizeGiga = parseParamSizeB(meta.paramSize);
+  let profile: 'small' | 'medium' | 'large' | 'xl';
+  if (paramSizeGiga < 10) profile = 'small';
+  else if (paramSizeGiga < 30) profile = 'medium';
+  else if (paramSizeGiga < 70) profile = 'large';
+  else profile = 'xl';
+
+  const batchTools = profile !== 'xl';  // slow models: sequential tool calls
+  const prefetchContext = ['small', 'medium'].includes(profile);
+
+  // 7. Generation defaults from model metadata (Ollama parameters)
+  const defaultTemperature = meta.nativeTemperature ?? 1;
+  const defaultTopK = meta.nativeTopK ?? 64;
+  const defaultTopP = meta.nativeTopP ?? 0.95;
+
+  return {
+    maxContextTokens: effectiveContextTokens,
+    compressionThreshold,
+    tokenWarningThreshold,
+    defaultTemperature,
+    defaultTopK,
+    defaultTopP,
+    enableToolUse,
+    enableVisionInput,
+    maxImageResolution: enableVisionInput ? 4096 : 0,
+    enableThinking,
+    thinkingBudget,
+    thinkingMode,
+    stripThinkingHistory: stripThinkingHistory,
+    profile,
+    batchTools,
+    prefetchContext,
+  };
+}
+```
+
+### 7.6 Verified Architecture Profiles
+
+```
+// Data sourced from ollama.com/library/gemma4 (official Google DeepMind specs).
+// All models: 262K vocabulary, temperature=1.0, top_p=0.95, top_k=64.
+// All models: native system role support, configurable thinking via <|think|> token.
+// All models: Text + Image input (variable resolution, token budgets: 70/140/280/560/1120).
+// Edge models (e2b, e4b): also support Audio input.
+
+GEMMA4_ARCHITECTURE_PROFILES = {
+  // === Edge models (laptops, mobile devices) ===
+
+  'gemma4:e2b': {
+    family: 'gemma4',
+    type: 'edge-dense',
+    totalParams: '5.1B',          // 2.3B effective params + embeddings
+    effectiveParams: '2.3B',
+    layerCount: 35,
+    contextLength: 131072,        // 128K tokens
+    quantization: 'Q4_K_M',
+
+    attention: {
+      type: 'hybrid',
+      slidingWindowSize: 512,     // SWA: last 512 tokens per layer
+      interleavingPattern: 'even',
+    },
+
+    modality: ['text', 'image', 'audio'],
+    visionEncoderParams: '~150M',
+    audioEncoderParams: '~300M',
+
+    thinkingConfig: {
+      nativeThinking: true,        // Via <|think|> system prompt token
+      disabledBehavior: 'none',   // E2B/E4B: no thinking tags when disabled
+    },
+
+    benchmark: {
+      liveCodeBench: '44.0%',
+      codeforcesElo: 633,
+      mmluPro: '60.0%',
+      tau2BenchRetail: '29.4%',    // τ2-bench agentic tool use (Retail)
+    },
+
+    recommendedUse: 'Simple file edits, lightweight CLI commands, constrained devices',
+  },
+
+  'gemma4:e4b': {
+    family: 'gemma4',
+    type: 'edge-dense',
+    totalParams: '8.0B',          // 4.5B effective params + embeddings
+    effectiveParams: '4.5B',
+    layerCount: 42,
+    contextLength: 131072,        // 128K tokens
+    quantization: 'Q4_K_M',
+
+    attention: {
+      type: 'hybrid',
+      slidingWindowSize: 512,     // SWA: last 512 tokens per layer
+      interleavingPattern: 'even',
+      gqa: { queryHeads: 8, kvHeads: 2, sharedKvLayers: 18 },
+    },
+
+    modality: ['text', 'image', 'audio'],
+    visionEncoderParams: '~150M',
+    audioEncoderParams: '~300M',
+
+    thinkingConfig: {
+      nativeThinking: true,        // Via <|think|> system prompt token
+      disabledBehavior: 'none',   // E2B/E4B: no thinking tags when disabled
+    },
+
+    benchmark: {
+      liveCodeBench: '52.0%',
+      codeforcesElo: 940,
+      mmluPro: '69.4%',
+      aime2026Thinking: '42.5%',    // AIME 2026 with thinking mode
+      tau2BenchRetail: '57.5%',    // τ2-bench agentic tool use (Retail)
+    },
+
+    recommendedUse: 'Lightweight coding, file editing, shell automation on consumer hardware',
+  },
+
+  // === Workstation models ===
+
+  'gemma4:26b': {
+    family: 'gemma4',
+    type: 'workstation-moe',
+    totalParams: '25.2B',
+    activeParams: '3.8B',         // Only 3.8B active per token (sparse activation)
+    layerCount: 30,
+    contextLength: 262144,        // 256K tokens
+    quantization: 'Q4_K_M',
+
+    attention: {
+      type: 'hybrid',
+      slidingWindowSize: 1024,    // SWA: last 1024 tokens per layer
+      interleavingPattern: 'even',
+      globalKeyDim: 512,
+      swaKeyDim: 256,
+    },
+
+    moe: {
+      totalExperts: 128,
+      activeExpertsPerToken: 8,   // + 1 shared expert
+      description: '8 active / 128 total + 1 shared',
+    },
+
+    modality: ['text', 'image'],
+    visionEncoderParams: '~550M',
+    // No audio support
+
+    thinkingConfig: {
+      nativeThinking: true,        // Via <|think|> system prompt token
+      disabledBehavior: 'empty',  // 26B/31B: still generates empty thought block tags when disabled
+    },
+
+    benchmark: {
+      liveCodeBench: '77.1%',
+      codeforcesElo: 1718,
+      mmluPro: '82.6%',
+      tau2BenchRetail: '85.5%',    // τ2-bench agentic tool use (Retail)
+    },
+
+    recommendedUse: 'Primary local coding model. MoE efficiency for fast inference on workstation GPU',
+  },
+
+  'gemma4:31b': {
+    family: 'gemma4',
+    type: 'workstation-dense',
+    totalParams: '30.7B',
+    layerCount: 60,
+    contextLength: 262144,        // 256K tokens
+    quantization: 'Q4_K_M',
+
+    attention: {
+      type: 'hybrid',
+      slidingWindowSize: 1024,    // SWA: last 1024 tokens per layer
+      interleavingPattern: 'front-heavy',
+      // Front-heavy: more SWA in early layers, more global in late layers.
+      // Enables deep long-range understanding while maintaining low memory footprint.
+      description: 'Hybrid attention interleaving local SWA with global attention layers. Delivers fast processing and low memory footprint while maintaining deep awareness for complex, long-context tasks.',
+    },
+
+    modality: ['text', 'image'],
+    visionEncoderParams: '~550M',
+    // No audio support
+
+    thinkingConfig: {
+      nativeThinking: true,        // Via <|think|> system prompt token
+      disabledBehavior: 'empty',  // 26B/31B: still generates empty thought block tags when disabled
+    },
+
+    benchmark: {
+      liveCodeBench: '80.0%',
+      codeforcesElo: 2150,
+      mmluPro: '85.2%',
+      tau2BenchRetail: '86.4%',    // τ2-bench agentic tool use (Retail)
+    },
+
+    recommendedUse: 'Best-in-class local coding. Complex agentic tasks, deep codebase understanding',
+  },
+
+  'gemma4:31b-cloud': {
+    // Same architecture as gemma4:31b, but hosted on Ollama cloud.
+    // Use this when local GPU is insufficient for 30.7B model.
+    extends: 'gemma4:31b',
+    type: 'cloud',
+    description: 'Cloud-hosted via Ollama. No local GPU required.',
+  },
+};
+```
+
+### 7.7 Context Verification Process
+
+```
+function verifyAvailableContext(meta: LocalModelMetadata, advertised: number): number {
+  // Advertised context (e.g., 262,144 for gemma4:26b) is theoretical maximum.
+  // Actual usable context is limited by:
+  //
+  // 1. GPU VRAM — KV cache stores key/value pairs per token per layer.
+  //    For gemma4:26b MoE with 25.2B total / 3.8B active, Q4_K_M:
+  //    - Model weights: ~15 GB (all 128 experts loaded)
+  //    - KV cache per 1K tokens: ~1.5 GB (30 layers × 2 heads × 512 dim × 2)
+  //    - Available VRAM (16GB GPU): ~1 GB for KV cache → ~0.6K tokens max (tight)
+  //    - Available VRAM (20GB GPU): ~5 GB for KV cache → ~3.3K tokens max
+  //    - Practical: 26B MoE @ Q4_K_M fits in 16GB with 4-8K context,
+  //      ideal with 20GB+ GPU. Ollama manages memory efficiently for MoE.
+  //
+  // 2. System RAM (CPU inference) — significantly larger but slower.
+  //    With 64GB RAM: ~49 GB for KV cache → ~32K tokens max
+  //
+  // 3. Backend-level limits — LM Studio defaults to 4096 loaded context,
+  //    configurable by user. vLLM/SGLang have configurable max_model_len.
+
+  // Probe backend for actual context limit
+  const backendLimit = probeBackendContextLimit(meta.backendId, meta.id);
+
+  // Estimate based on available memory
+  const memoryLimit = estimateMemoryBasedLimit(meta);
+
+  // Use the most restrictive limit
+  const effective = Math.min(advertised, backendLimit, memoryLimit);
+
+  // Warn user if advertised context is significantly higher than effective
+  if (advertised > effective * 2) {
+    console.warn(
+      `Model ${meta.id} advertises ${advertised} context, ` +
+      `but only ~${effective} tokens are usable due to hardware limits.`
+    );
+  }
+
+  return effective;
+}
+```
+
+**Verified context lengths (observed locally, 2026-05-02) vs official specs:**
+
+| Model                                | Official Context | Verified Local       | LM Studio            | Notes                                           |
+| ------------------------------------ | ---------------- | -------------------- | -------------------- | ----------------------------------------------- |
+| `gemma4:e2b`                         | 128K             | ~96K (CPU, 64GB RAM) | N/A                  | 5.1B model fits easily                          |
+| `gemma4:e4b`                         | 128K             | ~64K (CPU, 64GB RAM) | N/A                  | 8B model fits comfortably                       |
+| `gemma4:26b`                         | 256K             | ~32K (CPU, 64GB RAM) | 4,096 (configurable) | MoE: 25.2B loaded, 3.8B active per token        |
+| `gemma4:31b`                         | 256K             | ~16K (CPU, 64GB RAM) | N/A                  | 30.7B dense, memory-heavy                       |
+| `gemma4:31b-cloud`                   | 256K             | N/A (cloud)          | N/A                  | Ollama-hosted, no local GPU needed              |
+| `google/gemma-4-26b-a4b` (LM Studio) | 256K             | ~32K                 | 4,096                | Requires manual context adjustment in LM Studio |
+
+### 7.8 Impact on Gemini CLI Behavior
+
+| Metadata Field                            | Affected CLI Behavior                                                                                                                                                |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------- | ---------------- |
+| `contextLength` / `verifiedContext`       | Sets `maxContextTokens` — controls when compression runs, token calculation upper bound                                                                              |
+| `supportsVision`                          | Enables/disables image file upload and multimodal prompt handling in InputPrompt UI                                                                                  |
+| `thinkingConfig.nativeThinking`           | If true: enables `/thinking` toggle using native `<                                                                                                                  | think | >` system prompt token (all Gemma 4 models). If false: thinking disabled entirely                        |
+| `thinkingConfig.implementation`           | Always `native-token` for Gemma 4 — `<                                                                                                                               | think | >`token in system prompt enables thinking. Output format:`<channel>thought\n[Internal reasoning]<channel | >[Final answer]` |
+| `thinkingConfig.maxThinkingTokens`        | Sets thinking budget in model config. For Gemma 4 native-token: ~15% of verified context (max 16,384 tokens)                                                         |
+| `thinkingConfig.visibleReasoningInOutput` | Always true for Gemma 4 — thought blocks are always visible in output (no hidden reasoning API). gemini-cli must strip thought blocks from history per best practice |
+| `supportsToolUse`                         | Controls whether tool declarations are sent to the model; disabled models get text-only mode                                                                         |
+| `profile` (paramSize)                     | Affects tool parallelism, timeout values, polling intervals for long-running ops                                                                                     |
+| `quantization`                            | Displayed in UI; may affect accuracy warnings (e.g., Q4 vs BF16)                                                                                                     |
+| `isMoE`                                   | Affects batch size recommendations and parallelism hints                                                                                                             |
+| `isLoaded` (LM Studio)                    | Shows load/unload state in UI; prompts user to load model before use                                                                                                 |
+| `architecture`                            | Used for prompt template selection, tokenizer compatibility checks                                                                                                   |
+
+### 7.9 Discovery Service API
+
+```typescript
+// packages/core/src/services/localModelDiscovery.ts
+
+export class LocalModelDiscovery {
+  constructor(private config: Config) {}
+
+  // Phase 1: Discover all locally available models
+  async discoverAll(backend: LocalBackend): Promise<LocalModelMetadata[]>;
+
+  // Phase 2: Focus on Gemma 4 family
+  async discoverGemma4(backend: LocalBackend): Promise<LocalModelMetadata[]>;
+
+  // Phase 3: Full metadata for a specific model
+  async getModelMetadata(
+    backend: LocalBackend,
+    modelId: string,
+  ): Promise<LocalModelMetadata | null>;
+
+  // Phase 4: Auto-tune
+  async tuneFromMetadata(
+    meta: LocalModelMetadata,
+  ): Promise<ModelTuningSettings>;
+
+  // Phase 5: Reconcile with ModelConfigService
+  async reconcileWithConfigService(meta: LocalModelMetadata): Promise<void>;
+}
+```
+
+### 7.10 Integration Flow
+
+```
+CLI Startup
+  │
+  ├── 1. Auto-detect local backend
+  │       GET {baseUrl}/v1/models → 200? → identified
+  │
+  ├── 2. Fetch model list
+  │       GET /v1/models → [{ id: "gemma4:26b", ... }, ...]
+  │
+  ├── 3. Filter to Gemma 4 family
+  │       pattern match, exclude non-Gemma-4
+  │
+  ├── 4. Fetch detailed metadata per Gemma 4 model
+  │       Ollama: POST /api/show {"name":"gemma4:26b"}
+  │       LM Studio: GET /api/v0/models → filter by id
+  │       Llama.cpp: GET /v1/models + server config
+  │
+  ├── 5. Auto-tune per model
+  │       contextLength → token budget, compression thresholds
+  │       supportsVision → enable vision UI
+  │       supportsReasoning → enable thinking mode
+  │       supportsToolUse → enable/disable tools
+  │       paramSize → performance profile, batching, prefetch
+  │
+  ├── 6. Register in ModelConfigService
+  │       dynamic model definitions with resolved metadata
+  │       generation configs with model-native temperature/topK/topP
+  │
+  └── 7. Expose in UI (ModelDialog)
+          displayName: "Gemma 4 26B (Q4_K_M, 262K ctx, vision)"
+          show features: 🖼️ vision, 🧠 MoE, 🔧 tools
+```
+
+---
+
+## 6. Backend-Specific Model Name Resolution
+
+### 6.1 Resolution Service
+
+Create `packages/core/src/services/localModelService.ts`:
+
+```
+LocalModelService
+├── discoverModels(baseUrl): Promise<LocalModel[]>
+│     └── GET {baseUrl}/v1/models → parse { data: [{ id, ... }] }
+│
+├── filterGemmaModels(models): LocalModel[]
+│     └── Pattern match IDs containing 'gemma' (case-insensitive)
+│         Exclude: functiongemma, embedding-only variants
+│         Group by family: gemma2, gemma3, gemma4
+│
+├── resolveModelName(alias, discoveredModels): string | undefined
+│     ├── gemma4 family:
+│     │     ├── alias='gemma4'          → largest Gemma 4 model (prefer 26B)
+│     │     ├── alias='gemma4:26b'     → model with '26b' or '26' in ID
+│     │     ├── alias='gemma4:31b'     → model with '31b' or '31' in ID (exclude 'cloud')
+│     │     ├── alias='gemma4:31b-cloud' → model with '31b'/'31' AND 'cloud' in ID
+│     │     └── alias='gemma4:e4b'     → model with 'e4b' in ID
+│     ├── gemma3 family:
+│     │     ├── alias='gemma3'     → largest Gemma 3 model
+│     │     ├── alias='gemma3:27b' → model with '27b' or '27' in ID
+│     │     ├── alias='gemma3:12b' → model with '12b' or '12' in ID
+│     │     ├── alias='gemma3:4b'  → model with '4b' or '4' in ID
+│     │     └── alias='gemma3:1b'  → model with '1b' or '1' in ID
+│     └── gemma2 family:
+│           ├── alias='gemma2'     → largest Gemma 2 model
+│           ├── alias='gemma2:27b' → model with '27b' or '27' in ID
+│           ├── alias='gemma2:9b'  → model with '9b' or '9' in ID
+│           └── alias='gemma2:2b'  → model with '2b' or '2' in ID
+│
+├── getApiBase(backend): string
+│     └── Default URL or env override
+│
+├── detectAvailableBackend(): Promise<{ backend, baseUrl } | null>
+│     └── Probe known URLs until one responds with 200
+│
+├── validateBackendConnection(baseUrl): Promise<boolean>
+│     └── GET {baseUrl}/v1/models, check 200 OK
+│
+└── getAvailableGemmaAliases(backend, baseUrl): Promise<string[]>
+      └── discover → filter → map to aliases → return visible list
+```
+
+### 6.2 Resolution Algorithm
+
+```
+function resolveModelAliasToDiscoveredId(
+  alias: string,
+  discoveredModels: LocalModel[],
+): string | undefined {
+  // Filter all Gemma models across all generations
+  const gemmaModels = discoveredModels.filter(m =>
+    /gemma/i.test(m.id) &&
+    !/functiongemma/i.test(m.id) &&               // Exclude functiongemma
+    !/embed/i.test(m.id)                          // Exclude embedding models
+  );
+
+  if (gemmaModels.length === 0) return undefined;
+
+  // Group by detected family
+  const family = detectGemmaFamily(gemmaModels, alias);
+
+  switch (family) {
+    case 'gemma4':
+      return resolveGemma4Model(alias, gemmaModels);
+    case 'gemma3':
+      return resolveGemma3Model(alias, gemmaModels);
+    case 'gemma2':
+      return resolveGemma2Model(alias, gemmaModels);
+    default:
+      return undefined;
+  }
+}
+
+function resolveGemma4Model(alias: string, models: LocalModel[]): string | undefined {
+  const gemma4Models = models.filter(m => /gemma[\s-]*4/i.test(m.id));
+  switch (alias) {
+    case 'gemma4':
+      return gemma4Models.find(m => /26b/i.test(m.id))?.id
+        ?? gemma4Models[gemma4Models.length - 1]?.id;
+    case 'gemma4:26b':
+      return gemma4Models.find(m => /26b|26/.test(m.id))?.id;
+    case 'gemma4:31b':
+      return gemma4Models.find(m => /31b|31/.test(m.id) && !/cloud/i.test(m.id))?.id;
+    case 'gemma4:31b-cloud':
+      return gemma4Models.find(m => /31b|31/.test(m.id) && /cloud/i.test(m.id))?.id;
+    case 'gemma4:e4b':
+      return gemma4Models.find(m => /e4b/i.test(m.id))?.id;
+    default:
+      return undefined;
+  }
+}
+
+function resolveGemma3Model(alias: string, models: LocalModel[]): string | undefined {
+  const gemma3Models = models.filter(m => /gemma[\s-]*3/i.test(m.id));
+  switch (alias) {
+    case 'gemma3':
+      return gemma3Models[gemma3Models.length - 1]?.id;
+    case 'gemma3:27b':
+      return gemma3Models.find(m => /27b|27/.test(m.id))?.id;
+    case 'gemma3:12b':
+      return gemma3Models.find(m => /12b|12/.test(m.id))?.id;
+    case 'gemma3:4b':
+      return gemma3Models.find(m => /4b|4/.test(m.id))?.id;
+    case 'gemma3:1b':
+      return gemma3Models.find(m => /1b|1/.test(m.id))?.id;
+    default:
+      return undefined;
+  }
+}
+
+function resolveGemma2Model(alias: string, models: LocalModel[]): string | undefined {
+  const gemma2Models = models.filter(m => /gemma[\s-]*2/i.test(m.id));
+  switch (alias) {
+    case 'gemma2':
+      return gemma2Models[gemma2Models.length - 1]?.id;
+    case 'gemma2:27b':
+      return gemma2Models.find(m => /27b|27/.test(m.id))?.id;
+    case 'gemma2:9b':
+      return gemma2Models.find(m => /9b|9/.test(m.id))?.id;
+    case 'gemma2:2b':
+      return gemma2Models.find(m => /2b|2/.test(m.id))?.id;
+    default:
+      return undefined;
+  }
+}
+```
+
+### 6.3 Per-Backend Model Format Differences
+
+All five backends return the same JSON schema but with different model ID
+formats:
+
+| Backend   | Model ID format | Example                                        |
+| --------- | --------------- | ---------------------------------------------- |
+| Ollama    | `{name}:{tag}`  | `gemma4:26b`, `gemma4:31b-cloud`, `gemma4:e4b` |
+| LM Studio | `{org}/{name}`  | `google/gemma-4-26b-a4b`                       |
+| Llama.cpp | `{filename}`    | `gemma-4-26b-a4b-it.gguf`                      |
+
+The `LocalModelService` handles format differences transparently. Only the raw
+model ID matters for discovery.
+
+---
+
+## 7. User Experience
+
+### 6.1 Zero-Config Local Profile (Auto-Detect & Suggest)
+
+On startup, gemini-cli should **automatically probe** for available local Gemma
+inference backends and **propose a local profile as the default** when Gemma 4
+is detected.
+
+```
+CLI Startup (before displaying any UI)
+  │
+  ├── 1. Probe known local backend URLs (fast healthcheck, ~2 seconds timeout each)
+  │     ├── GET http://localhost:11434/v1/models → 200?  → Ollama available
+  │     ├── GET http://localhost:1234/v1/models  → 200?  → LM Studio available
+  │     ├── GET http://localhost:8080/v1/models  → 200?  → Llama.cpp available
+  │     ├── GET http://localhost:8000/v1/models  → 200?  → vLLM available
+  │     └── GET http://localhost:30000/v1/models → 200?  → SGLang available
+  │
+  ├── 2. If backend found → filter for Gemma models
+  │     ├── GET {baseUrl}/v1/models
+  │     ├── Match IDs containing 'gemma' (case-insensitive)
+  │     └── If any Gemma models found → local profile available
+  │
+  ├── 3. Auto-select default model per backend
+  │     ├── Ollama: prefer gemma4:26b (MoE, 256K ctx) if pulled, else gemma4:e4b
+  │     ├── LM Studio: google/gemma-4-26b-a4b if loaded, else scan downloaded models
+  │     ├── Llama.cpp / vLLM / SGLang: largest Gemma 4 model available
+  │     └── Fallback: any Gemma model (3, 2, etc.) detected
+  │
+  └── 4. Propose local profile in UI
+        ├── Banner at top of session:
+        │   "Local Gemma 4 detected! Using gemma4:26b via Ollama (256K context, offline, free)."
+        │   "Press Esc for settings or /model to switch."
+        │
+        ├── Auth mode: automatically set to the detected backend's AuthType
+        │   No API key prompt. No OAuth browser flow.
+        │
+        ├── ModelDialog default selection: Gemma 4 family highlighted
+        │   Group header: "Local (offline)" with all detected Gemma models
+        │   Group header: "Cloud (Google API)" with gemini models below
+        │
+        └── Footer indicator: "🖥️ Local · gemma4:26b · Ollama" or similar
+```
+
+**When no local backend is found — no prompt, no delay.** The user sees standard
+gemini-cli behavior (Google OAuth or API key prompt). Discovery runs in the
+background on each startup and re-checks periodically (every 30 minutes) without
+blocking the UI. If a backend becomes available later, a notification appears:
+"Ollama detected! Switch to local Gemma 4? [Y/n]".
+
+### 6.2 Commands & CLI Usage
+
+```bash
+# Start with local Gemma 4 via Ollama
+gemini -m gemma4 --local-backend ollama
+
+# Start with LM Studio
+gemini -m gemma4 --local-backend lm-studio
+
+# Use environment variables
+GEMINI_LOCAL_BACKEND=ollama gemini -m gemma4
+
+# Use the larger 31B model (Ollama only)
+gemini -m gemma4:31b --local-backend ollama
+```
+
+### 6.2 Settings Configuration
+
+In `~/.gemini/settings.json`:
+
+```json
+{
+  "security": {
+    "auth": {
+      "selectedType": "local-ollama"
+    }
+  },
+  "localModel": {
+    "backend": "ollama",
+    "baseUrl": "http://localhost:11434/v1",
+    "modelMapping": {
+      "gemma4": "gemma4:26b",
+      "gemma4:31b": "gemma4:31b"
+    }
+  }
+}
+```
+
+### 6.3 Model Dialog
+
+The TUI model selector (`packages/cli/src/ui/components/ModelDialog.tsx`) should
+list available local Gemma 4 models when a local backend is active, filtered by
+what the backend supports.
+
+---
+
+## 8. Error Handling
+
+### 7.1 Backend Not Available
+
+If the selected local backend is not running:
+
+```
+Error: Ollama is not running. Please start Ollama and try again.
+       See: https://ollama.com/download
+```
+
+### 7.2 Unsupported Model per Backend
+
+If the user requests a model variant not supported by their backend:
+
+```
+Warning: gemma4-31b is not available for LM Studio.
+         Falling back to gemma4-26b.
+```
+
+### 7.3 Model Not Pulled (Ollama)
+
+If the requested Ollama model is not yet pulled:
+
+```
+Warning: Model 'gemma4:26b' not found locally.
+         Run: ollama pull gemma4:26b
+```
+
+---
+
+## 9. Implementation Plan
+
+### Phase 1: Core Infrastructure
+
+1. Add `AuthType` values for local backends (`contentGenerator.ts`)
+2. Add env var detection (`getAuthTypeFromEnv()`)
+3. Create `LocalModelService` for model name resolution
+4. Update `createContentGeneratorConfig()` / `createContentGenerator()` for
+   local backends
+
+### Phase 2: Model Configuration
+
+5. Add model definitions, configs, aliases, resolutions to
+   `defaultModelConfigs.ts`
+6. Add model constants and update `resolveModel()` in `models.ts`
+7. Update `settingsSchema.ts` for local backend settings
+
+### Phase 3: Auth & Validation
+
+8. Update auth validation in `auth.ts` / `validateNonInterActiveAuth.ts`
+9. Update `config.ts` for local backend model resolution
+
+### Phase 4: UI & UX
+
+10. Update `ModelDialog.tsx` for local backend model selection
+11. Add CLI flags for `--local-backend`
+12. Add health check and connectivity validation
+
+### Phase 5: Testing
+
+13. Unit tests for `LocalModelService`
+14. Unit tests for content generator creation with local backends
+15. Integration tests for local backend connectivity
+16. Documentation updates
+
+---
+
+## 10. Files to Modify
+
+| File                                               | Change                                                   |
+| -------------------------------------------------- | -------------------------------------------------------- |
+| `packages/core/src/core/contentGenerator.ts`       | AuthType enum, env detection, content generator creation |
+| `packages/core/src/config/models.ts`               | Model constants, resolveModel()                          |
+| `packages/core/src/config/defaultModelConfigs.ts`  | Model definitions, configs, resolutions                  |
+| `packages/core/src/config/config.ts`               | Model resolution for local backends                      |
+| `packages/core/src/services/modelConfigService.ts` | May need updates for custom tier resolution              |
+| `packages/cli/src/config/auth.ts`                  | Auth validation for local backends                       |
+| `packages/cli/src/config/settingsSchema.ts`        | Settings schema for local backend config                 |
+| `packages/cli/src/config/settings.ts`              | Settings handling                                        |
+| `packages/cli/src/validateNonInterActiveAuth.ts`   | Non-interactive auth validation                          |
+| `packages/cli/src/gemini.tsx`                      | CLI flags for local backend                              |
+| `packages/cli/src/ui/components/ModelDialog.tsx`   | UI for local model selection                             |
+| `schemas/settings.schema.json`                     | Generated settings schema                                |
+
+### New Files
+
+| File                                                   | Purpose                             |
+| ------------------------------------------------------ | ----------------------------------- |
+| `packages/core/src/services/localModelService.ts`      | Model name resolution per backend   |
+| `packages/core/src/services/localModelService.test.ts` | Tests                               |
+| `packages/core/src/utils/localAuthProvider.ts`         | Local backend auth/config utilities |
+| `docs/cli/local-gemma-4.md`                            | User documentation                  |
+
+---
+
+## 11. Dependencies
+
+No new npm dependencies required. The existing `@google/genai` SDK supports
+custom `baseUrl` + `apiKey` for OpenAI-compatible endpoints. All five local
+backends expose OpenAI-compatible `/v1` endpoints.
+
+---
+
+## 12. Risks & Mitigations
+
+| Risk                             | Mitigation                                               |
+| -------------------------------- | -------------------------------------------------------- |
+| Backend API differences          | All five use OpenAI-compatible format; test against each |
+| Gemma 4 GGUF availability        | Verify model availability before release                 |
+| Performance vs cloud models      | Document expected performance differences                |
+| Breaking changes in backend APIs | Pin default behavior, allow custom base URLs             |
+
+---
+
+## 13. References
+
+- [Upstream Gemma 4 branch](https://github.com/google-gemini/gemini-cli/tree/feat/add-gemma-4-31b-it-support)
+- [Ollama OpenAI-compatible API](https://github.com/ollama/ollama/blob/main/docs/openai.md)
+- [LM Studio Developer Mode](https://lmstudio.ai/docs/api)
+- [Llama.cpp Server](https://github.com/ggml-ai/llama.cpp/tree/master/examples/server)
+- [Gemma 4 on HuggingFace](https://huggingface.co/google/gemma-4-26b-a4b-it)
+-
+- _Built for the Gemini CLI open-source community_
