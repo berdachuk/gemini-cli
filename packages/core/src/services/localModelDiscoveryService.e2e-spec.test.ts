@@ -144,4 +144,130 @@ describe('LocalModelDiscoveryService Integration', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it('discovers LM Studio models with org/name ID format', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('1234/v1/models')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'google/gemma-4-26b-a4b',
+                  object: 'model',
+                  owned_by: 'google',
+                },
+                { id: 'text-embedding-nomic-embed-text-v1.5', object: 'model' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('Not Found', { status: 404 });
+      });
+
+    const { LocalModelDiscoveryService } = await import(
+      './localModelDiscoveryService.js'
+    );
+    const { AuthType } = await import('../core/contentGenerator.js');
+
+    const discovery = new LocalModelDiscoveryService();
+    const result = await discovery.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_LM_STUDIO],
+    });
+
+    expect(result.backends).toHaveLength(1);
+    const backend = result.backends[0];
+    expect(backend.authType).toBe(AuthType.USE_LOCAL_LM_STUDIO);
+    expect(backend.gemma4Models.map((m) => m.id)).toEqual([
+      'google/gemma-4-26b-a4b',
+    ]);
+    expect(backend.gemma4Metadata).toHaveLength(1);
+    expect(backend.gemma4Metadata[0].paramSize).toBeDefined();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('discovers 26B MoE model and produces correct tuning profile', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/v1/models')) {
+          return new Response(
+            JSON.stringify({
+              data: [{ id: 'gemma4:26b', object: 'model', owned_by: 'google' }],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (urlStr.includes('/api/show')) {
+          return new Response(
+            JSON.stringify({
+              model_info: { totalParams: '25.2B' },
+              details: { quantization_level: 'Q4_K_M' },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('Not Found', { status: 404 });
+      });
+
+    const { LocalModelDiscoveryService } = await import(
+      './localModelDiscoveryService.js'
+    );
+    const { AuthType } = await import('../core/contentGenerator.js');
+
+    const discovery = new LocalModelDiscoveryService();
+    const result = await discovery.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_OLLAMA],
+    });
+
+    expect(result.backends).toHaveLength(1);
+    const backend = result.backends[0];
+    expect(backend.gemma4Models.map((m) => m.id)).toContain('gemma4:26b');
+    expect(backend.gemma4Metadata[0].paramSize).toBe('25.2B');
+
+    const tunings = await discovery.tuneBackendModels(backend);
+    const tuning = tunings.get('gemma4:26b');
+    expect(tuning).toBeDefined();
+    expect(tuning?.profile).toBe('medium');
+
+    fetchSpy.mockRestore();
+  });
+
+  it('handles all 5 backends with no Gemma 4 models gracefully', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'llama3', object: 'model' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { LocalModelDiscoveryService } = await import(
+      './localModelDiscoveryService.js'
+    );
+    const { AuthType } = await import('../core/contentGenerator.js');
+
+    const discovery = new LocalModelDiscoveryService();
+    const result = await discovery.discoverBackends({
+      authTypes: [
+        AuthType.USE_LOCAL_OLLAMA,
+        AuthType.USE_LOCAL_LM_STUDIO,
+        AuthType.USE_LOCAL_LLAMA_CPP,
+        AuthType.USE_LOCAL_VLLM,
+        AuthType.USE_LOCAL_SGLANG,
+      ],
+    });
+
+    for (const backend of result.backends) {
+      expect(backend.gemma4Models).toHaveLength(0);
+    }
+
+    fetchSpy.mockRestore();
+  });
 });

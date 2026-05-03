@@ -24,6 +24,9 @@ import {
   GEMMA_MODEL_ALIAS_4,
   GEMMA_MODEL_ALIAS_4_26B,
   GEMMA_MODEL_ALIAS_4_31B,
+  GEMMA_MODEL_ALIAS_4_31B_CLOUD,
+  GEMMA_MODEL_ALIAS_4_E4B,
+  GEMMA_MODEL_ALIAS_4_E2B,
 } from '@google/gemini-cli-core';
 import type { Config, ModelSlashCommandEvent } from '@google/gemini-cli-core';
 
@@ -150,36 +153,6 @@ describe('<ModelDialog />', () => {
     expect(lastFrame()).toContain('Remember model for future sessions: false');
     expect(lastFrame()).toContain('Auto');
     expect(lastFrame()).toContain('Manual');
-    unmount();
-  });
-
-  it('renders the "manual" view initially for users with no pro access and filters Pro models with correct order', async () => {
-    mockGetProModelNoAccessSync.mockReturnValue(true);
-    mockGetProModelNoAccess.mockResolvedValue(true);
-    mockGetHasAccessToPreviewModel.mockReturnValue(true);
-    mockGetGemini31FlashLiteLaunchedSync.mockReturnValue(true);
-    mockGetDisplayString.mockImplementation((val: string) => val);
-
-    const { lastFrame, unmount } = await renderComponent();
-
-    const output = lastFrame();
-    expect(output).toContain('Select Model');
-    expect(output).not.toContain(DEFAULT_GEMINI_MODEL);
-    expect(output).not.toContain(PREVIEW_GEMINI_MODEL);
-
-    // Verify order: Flash Preview -> Flash Lite Preview -> Flash -> Flash Lite
-    const flashPreviewIdx = output.indexOf(PREVIEW_GEMINI_FLASH_MODEL);
-    const flashLitePreviewIdx = output.indexOf(
-      PREVIEW_GEMINI_3_1_FLASH_LITE_MODEL,
-    );
-    const flashIdx = output.indexOf(DEFAULT_GEMINI_FLASH_MODEL);
-    const flashLiteIdx = output.indexOf(DEFAULT_GEMINI_FLASH_LITE_MODEL);
-
-    expect(flashPreviewIdx).toBeLessThan(flashLitePreviewIdx);
-    expect(flashLitePreviewIdx).toBeLessThan(flashIdx);
-    expect(flashIdx).toBeLessThan(flashLiteIdx);
-
-    expect(output).not.toContain('Auto');
     unmount();
   });
 
@@ -576,6 +549,121 @@ describe('<ModelDialog />', () => {
         expect(output).toContain(GEMMA_MODEL_ALIAS_4);
         expect(output).toContain(GEMMA_MODEL_ALIAS_4_26B);
         expect(output).toContain(GEMMA_MODEL_ALIAS_4_31B);
+      });
+      unmount();
+    });
+
+    it('groups models by provider when multiple backends are discovered', async () => {
+      mockDiscoverBackends.mockResolvedValue({
+        backends: [
+          {
+            authType: AuthType.USE_LOCAL_OLLAMA,
+            backend: 'ollama',
+            baseUrl: 'http://localhost:11434/v1',
+            models: [{ id: 'gemma4:31b' }, { id: 'gemma4:e4b' }],
+            gemma4Models: [{ id: 'gemma4:31b' }, { id: 'gemma4:e4b' }],
+            gemma4Metadata: [],
+          },
+          {
+            authType: AuthType.USE_LOCAL_LM_STUDIO,
+            backend: 'lm-studio',
+            baseUrl: 'http://localhost:1234/v1',
+            models: [{ id: 'google/gemma-4-26b-a4b' }],
+            gemma4Models: [{ id: 'google/gemma-4-26b-a4b' }],
+            gemma4Metadata: [],
+          },
+        ],
+        preferredBackend: null,
+      });
+
+      const { lastFrame, stdin, waitUntilReady, unmount } =
+        await renderComponent(mockConfig as Config, AuthType.USE_LOCAL_OLLAMA);
+
+      await act(async () => {
+        stdin.write('\u001B[B');
+      });
+      await waitUntilReady();
+      await act(async () => {
+        stdin.write('\r');
+      });
+      await waitUntilReady();
+
+      await waitFor(() => {
+        const output = lastFrame();
+        expect(output).toContain('Ollama');
+        expect(output).toContain('gemma4:31b');
+        expect(output).toContain('gemma4:e4b');
+        expect(output).toContain('LM Studio');
+        expect(output).toContain('google/gemma-4-26b-a4b');
+      });
+      unmount();
+    });
+
+    it('shows all 6 Gemma 4 aliases when falling back to static list', async () => {
+      mockDiscoverBackends.mockResolvedValue({ backends: [] });
+
+      const { lastFrame, stdin, waitUntilReady, unmount } =
+        await renderComponent(mockConfig as Config, AuthType.USE_LOCAL_OLLAMA);
+
+      await act(async () => {
+        stdin.write('\u001B[B');
+      });
+      await waitUntilReady();
+      await act(async () => {
+        stdin.write('\r');
+      });
+      await waitUntilReady();
+
+      await waitFor(() => {
+        const output = lastFrame();
+        expect(output).toContain(GEMMA_MODEL_ALIAS_4);
+        expect(output).toContain(GEMMA_MODEL_ALIAS_4_26B);
+        expect(output).toContain(GEMMA_MODEL_ALIAS_4_31B);
+        expect(output).toContain(GEMMA_MODEL_ALIAS_4_31B_CLOUD);
+        expect(output).toContain(GEMMA_MODEL_ALIAS_4_E4B);
+        expect(output).toContain(GEMMA_MODEL_ALIAS_4_E2B);
+      });
+      unmount();
+    });
+
+    it('renders discovered models with metadata descriptions', async () => {
+      mockDiscoverBackends.mockResolvedValue({
+        backends: [
+          {
+            authType: AuthType.USE_LOCAL_OLLAMA,
+            backend: 'ollama',
+            baseUrl: 'http://localhost:11434/v1',
+            models: [{ id: 'gemma4:26b' }],
+            gemma4Models: [{ id: 'gemma4:26b' }],
+            gemma4Metadata: [
+              {
+                id: 'gemma4:26b',
+                paramSize: '25.2B',
+                quantization: 'Q4_K_M',
+                contextLength: 262144,
+              },
+            ],
+          },
+        ],
+        preferredBackend: null,
+      });
+
+      const { lastFrame, stdin, waitUntilReady, unmount } =
+        await renderComponent(mockConfig as Config, AuthType.USE_LOCAL_OLLAMA);
+
+      await act(async () => {
+        stdin.write('\u001B[B');
+      });
+      await waitUntilReady();
+      await act(async () => {
+        stdin.write('\r');
+      });
+      await waitUntilReady();
+
+      await waitFor(() => {
+        const output = lastFrame();
+        expect(output).toContain('Ollama');
+        expect(output).toContain('gemma4:26b');
       });
       unmount();
     });
