@@ -202,13 +202,22 @@ Cloud: gemma4:31b-cloud (Ollama hosted, 30.7B, 256K ctx, Text+Image, no local si
 
 **Per-variant suitability for gemini-cli:**
 
-| Variant            | Code Gen                                       | Tool Use                     | Reasoning                  | Edge Use             | Recommendation                                                      |
-| ------------------ | ---------------------------------------------- | ---------------------------- | -------------------------- | -------------------- | ------------------------------------------------------------------- |
-| `gemma4:e2b`       | Minimal (44% LiveCodeBench, 633 Codeforces)    | Basic                        | Yes, configurable thinking | Laptops/phones       | **Include** — basic editing, simple file ops. Lightweight CLI tasks |
-| `gemma4:e4b`       | Moderate (52% LiveCodeBench, 940 Codeforces)   | Yes, GQA + function calling  | Yes, configurable thinking | Laptops              | **Include** — lightweight coding, file editing, shell automation    |
-| `gemma4:26b`       | Strong (77.1% LiveCodeBench, 1718 Codeforces)  | Yes, native function calling | Yes, configurable thinking | Workstation GPU      | **Include** — primary coding model, MoE efficiency                  |
-| `gemma4:31b`       | Excellent (80% LiveCodeBench, 2150 Codeforces) | Yes, native function calling | Yes, configurable thinking | High-end workstation | **Include** — best-in-class local coding, complex agentic tasks     |
-| `gemma4:31b-cloud` | Excellent (same as 31B)                        | Yes, remote inference        | Yes, configurable thinking | Cloud                | **Include** — Ollama cloud-hosted, no local GPU needed              |
+All supported Gemma 4 variants are expected to be capable of basic
+code-generation tasks, but they are not equivalent choices for real-world coding
+sessions. In local Ollama integration testing, the pulled `gemma4:e2b`,
+`gemma4:e4b`, `gemma4:26b`, and `gemma4:31b-cloud` variants were each able to
+generate a minimal Java Hello World program. The recommendation table below
+should therefore be read as "minimum viable coding capability" versus
+"recommended for sustained coding work," not as a binary supported/unsupported
+split.
+
+| Variant            | Code Gen                                       | Tool Use                     | Reasoning                  | Edge Use             | Recommendation                                                       |
+| ------------------ | ---------------------------------------------- | ---------------------------- | -------------------------- | -------------------- | -------------------------------------------------------------------- |
+| `gemma4:e2b`       | Minimal (44% LiveCodeBench, 633 Codeforces)    | Basic                        | Yes, configurable thinking | Laptops/phones       | **Include** — basic code tasks, simple file ops, lightweight CLI use |
+| `gemma4:e4b`       | Moderate (52% LiveCodeBench, 940 Codeforces)   | Yes, GQA + function calling  | Yes, configurable thinking | Laptops              | **Include** — small edits, lightweight coding, shell automation      |
+| `gemma4:26b`       | Strong (77.1% LiveCodeBench, 1718 Codeforces)  | Yes, native function calling | Yes, configurable thinking | Workstation GPU      | **Include** — recommended primary local coding model                 |
+| `gemma4:31b`       | Excellent (80% LiveCodeBench, 2150 Codeforces) | Yes, native function calling | Yes, configurable thinking | High-end workstation | **Include** — best-in-class local coding, complex agentic tasks      |
+| `gemma4:31b-cloud` | Excellent (same as 31B)                        | Yes, remote inference        | Yes, configurable thinking | Cloud                | **Include** — strong coding option without requiring a local GPU     |
 
 ---
 

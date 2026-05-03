@@ -143,6 +143,47 @@ Ensure LM Studio is in Developer Mode with the REST API enabled:
 - Settings → Developer Mode → Enable REST API
 - The local server must be started (default port 1234)
 
+### Backend health check errors
+
+On startup, Gemini CLI performs a health check against the backend's
+`GET /v1/models` endpoint. The following errors can occur:
+
+**Backend not running**
+
+```
+Ollama is not running at http://localhost:11434/v1. Please start the backend and try again.
+```
+
+**Fix:** Start the backend server (e.g., `ollama serve`) before running Gemini
+CLI.
+
+**Health check timed out**
+
+```
+Backend health check timed out after 2000ms
+```
+
+**Fix:** Ensure the backend is responding within 2 seconds. Check network
+connectivity, firewall rules, and that the backend is not overloaded.
+
+**Health check failed with HTTP status**
+
+```
+Backend health check failed with status 5xx
+```
+
+**Fix:** Check the backend's logs for server errors. Common issues include
+missing model files or configuration problems.
+
+**Health check network error**
+
+```
+Backend health check error: fetch failed
+```
+
+**Fix:** Verify the backend URL is correct in your settings. Check that the
+backend is listening on the expected host and port.
+
 ### Switching back to cloud models
 
 ```bash
@@ -163,12 +204,18 @@ Or change `selectedType` in `~/.gemini/settings.json` to `oauth-personal`.
 
 ### Recommended models for coding
 
-| Variant | Code Gen        | Use Case                                    |
-| ------- | --------------- | ------------------------------------------- |
-| e2b     | Minimal         | Lightweight CLI tasks, simple file edits    |
-| e4b     | Moderate        | File editing, shell automation              |
-| 26b     | Strong (77%)    | Primary coding model, MoE efficiency        |
-| 31b     | Excellent (80%) | Best-in-class local coding, complex agentic |
+All supported Gemma 4 variants can handle basic code-generation tasks. In local
+integration testing against Ollama, the pulled `e2b`, `e4b`, `26b`, and
+`31b-cloud` variants all successfully generated a minimal Java Hello World
+program. That said, they are not equally suitable for sustained real coding
+workflows.
+
+| Variant | Code Gen        | Use Case                                 |
+| ------- | --------------- | ---------------------------------------- |
+| e2b     | Minimal         | Basic code tasks, lightweight CLI work   |
+| e4b     | Moderate        | Small edits, file work, shell automation |
+| 26b     | Strong (77%)    | Recommended primary local coding model   |
+| 31b     | Excellent (80%) | Best choice for complex local coding     |
 
 ### Quantization tiers
 
