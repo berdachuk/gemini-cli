@@ -423,38 +423,29 @@ export function openAiToGeminiResponse(
     parts.push({ text: message.content });
   }
 
-  const functionCalls: Array<{
-    id?: string;
-    name: string;
-    args: Record<string, unknown>;
-  }> = [];
   if (message?.tool_calls) {
     for (const tc of message.tool_calls) {
+      const fn = tc.function;
       let args: Record<string, unknown> = {};
       try {
-        const parsed: unknown = JSON.parse(tc.function.arguments || '{}');
-        args = isRecord(parsed) ? parsed : {};
+        const parsed: unknown = JSON.parse(fn?.arguments || '{}');
+        if (isRecord(parsed)) {
+          args = parsed;
+        }
       } catch {
         args = {};
       }
       parts.push({
         functionCall: {
-          id: tc.id,
-          name: tc.function.name,
+          id: tc.id || '',
+          name: fn?.name || '',
           args,
         },
-      });
-      functionCalls.push({
-        id: tc.id,
-        name: tc.function.name,
-        args,
       });
     }
   }
 
-  const finishReason = choice?.finish_reason
-    ? finishReasonToGemini(choice.finish_reason)
-    : FinishReason.STOP;
+  const finishReason = finishReasonToGemini(choice?.finish_reason || 'stop');
 
   const out = Object.assign(new GenerateContentResponse(), {
     candidates: [
@@ -468,7 +459,6 @@ export function openAiToGeminiResponse(
     ],
     modelVersion: openAiResp.model || model,
     responseId: openAiResp.id,
-    ...(functionCalls.length > 0 ? { functionCalls } : {}),
     ...(openAiResp.usage
       ? {
           usageMetadata: {
@@ -543,11 +533,6 @@ export function openAiChunkToGeminiChunk(
       parts.push({ text: accumulator.textContent });
     }
 
-    const toolCalls: Array<{
-      id?: string;
-      name: string;
-      args: Record<string, unknown>;
-    }> = [];
     if (accumulator.toolCallDeltas.size > 0) {
       for (const [, tc] of accumulator.toolCallDeltas) {
         let args: Record<string, unknown> = {};
@@ -566,11 +551,6 @@ export function openAiChunkToGeminiChunk(
             args,
           },
         });
-        toolCalls.push({
-          id: tc.id || '',
-          name: tc.name,
-          args,
-        });
       }
     }
 
@@ -588,7 +568,6 @@ export function openAiChunkToGeminiChunk(
       ],
       modelVersion: chunk.model || model,
       responseId: chunk.id,
-      ...(toolCalls.length > 0 ? { functionCalls: toolCalls } : {}),
       ...(accumulator.usage
         ? {
             usageMetadata: {
