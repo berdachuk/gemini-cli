@@ -111,6 +111,21 @@ export function isLocalGemma4Alias(model: string): boolean {
   return LOCAL_GEMMA_4_ALIASES.has(model.trim());
 }
 
+export function isGemma4FamilyModel(model: string): boolean {
+  const normalizedModel = model.trim().toLowerCase();
+  if (!normalizedModel) {
+    return false;
+  }
+
+  return (
+    isLocalGemma4Alias(normalizedModel) ||
+    (normalizedModel.includes('gemma') &&
+      normalizedModel.includes('4') &&
+      !normalizedModel.includes('embed') &&
+      !normalizedModel.includes('functiongemma'))
+  );
+}
+
 /**
  * Resolves the requested model alias (e.g., 'auto-gemini-3', 'pro', 'flash', 'flash-lite')
  * to a concrete model name.

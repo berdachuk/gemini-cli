@@ -30,7 +30,7 @@ import type { ValidationRequiredError } from '../utils/googleQuotaErrors.js';
 import {
   resolveModel,
   supportsModernFeatures,
-  isLocalGemma4Alias,
+  isGemma4FamilyModel,
 } from '../config/models.js';
 import { ToolFilter, type ToolFilterConfig } from '../services/toolFilter.js';
 import { isLocalBackendAuthType } from './contentGenerator.js';
@@ -864,7 +864,7 @@ export class GeminiChat {
     const authType = this.context.config.getContentGeneratorConfig()?.authType;
     if (!isLocalBackendAuthType(authType)) return false;
     const activeModel = this.context.config.getModel();
-    return isLocalGemma4Alias(activeModel);
+    return isGemma4FamilyModel(activeModel);
   }
 
   private async getFilteredTools(

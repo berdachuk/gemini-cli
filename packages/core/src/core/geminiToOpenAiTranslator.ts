@@ -143,6 +143,116 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function normalizeSchemaType(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) {
+    return undefined;
+  }
+
+  return value.toLowerCase();
+}
+
+function normalizeOpenAiSchema(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeOpenAiSchema(item));
+  }
+
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const normalized: Record<string, unknown> = {};
+
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (key === '$schema') {
+      continue;
+    }
+
+    if (key === 'type') {
+      normalized['type'] = normalizeSchemaType(rawValue);
+      continue;
+    }
+
+    if (key === 'properties') {
+      normalized['properties'] = isRecord(rawValue)
+        ? Object.fromEntries(
+            Object.entries(rawValue).map(([propertyName, propertySchema]) => [
+              propertyName,
+              isRecord(propertySchema)
+                ? normalizeOpenAiSchema(propertySchema)
+                : {},
+            ]),
+          )
+        : {};
+      continue;
+    }
+
+    if (key === 'items') {
+      normalized['items'] =
+        isRecord(rawValue) || Array.isArray(rawValue)
+          ? normalizeOpenAiSchema(rawValue)
+          : {};
+      continue;
+    }
+
+    if (key === 'additionalProperties') {
+      normalized['additionalProperties'] =
+        typeof rawValue === 'boolean'
+          ? rawValue
+          : isRecord(rawValue)
+            ? normalizeOpenAiSchema(rawValue)
+            : true;
+      continue;
+    }
+
+    if (key === 'required') {
+      normalized['required'] = Array.isArray(rawValue)
+        ? rawValue.filter((item): item is string => typeof item === 'string')
+        : [];
+      continue;
+    }
+
+    if (key === 'anyOf' || key === 'oneOf' || key === 'allOf') {
+      normalized[key] = Array.isArray(rawValue)
+        ? rawValue.map((entry) => normalizeOpenAiSchema(entry))
+        : [];
+      continue;
+    }
+
+    normalized[key] = normalizeOpenAiSchema(rawValue);
+  }
+
+  if ('properties' in normalized) {
+    normalized['type'] = 'object';
+  }
+
+  if (normalized['type'] === 'object' && !('properties' in normalized)) {
+    normalized['properties'] = {};
+  }
+
+  return normalized;
+}
+
+function getFunctionParametersSchema(declaration: {
+  parameters?: unknown;
+  parametersJsonSchema?: unknown;
+}): Record<string, unknown> {
+  const rawSchema = isRecord(declaration['parametersJsonSchema'])
+    ? declaration['parametersJsonSchema']
+    : isRecord(declaration['parameters'])
+      ? declaration['parameters']
+      : {};
+
+  const normalized = normalizeOpenAiSchema(rawSchema);
+  if (isRecord(normalized)) {
+    return normalized;
+  }
+
+  return {
+    type: 'object',
+    properties: {},
+  };
+}
+
 function isContent(obj: unknown): obj is Content {
   return (
     typeof obj === 'object' && obj !== null && 'role' in obj && 'parts' in obj
@@ -290,7 +400,7 @@ function toolsToOpenAi(
           function: {
             name: fd.name ?? '',
             description: fd.description ?? '',
-            parameters: isRecord(fd.parameters) ? fd.parameters : {},
+            parameters: getFunctionParametersSchema(fd),
           },
         });
       }

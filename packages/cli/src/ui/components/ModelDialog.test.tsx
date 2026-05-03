@@ -599,6 +599,75 @@ describe('<ModelDialog />', () => {
       unmount();
     });
 
+    it('refreshes auth with the discovered provider when selecting a discovered model', async () => {
+      mockDiscoverBackends.mockResolvedValue({
+        backends: [
+          {
+            authType: AuthType.USE_LOCAL_OLLAMA,
+            backend: 'ollama',
+            baseUrl: 'http://localhost:11434/v1',
+            models: [{ id: 'gemma4:31b' }],
+            gemma4Models: [{ id: 'gemma4:31b' }],
+            gemma4Metadata: [],
+          },
+          {
+            authType: AuthType.USE_LOCAL_LM_STUDIO,
+            backend: 'lm-studio',
+            baseUrl: 'http://localhost:1234/v1',
+            models: [{ id: 'google/gemma-4-26b-a4b' }],
+            gemma4Models: [{ id: 'google/gemma-4-26b-a4b' }],
+            gemma4Metadata: [],
+          },
+        ],
+        preferredBackend: null,
+      });
+
+      const { stdin, waitUntilReady, unmount } = await renderComponent(
+        mockConfig as Config,
+        AuthType.USE_LOCAL_OLLAMA,
+        {
+          localModel: {
+            providers: {
+              'lm-studio': {
+                baseUrl: 'http://localhost:1234',
+              },
+            },
+          },
+        },
+      );
+
+      await act(async () => {
+        stdin.write('\u001B[B');
+      });
+      await waitUntilReady();
+      await act(async () => {
+        stdin.write('\r');
+      });
+      await waitUntilReady();
+
+      await act(async () => {
+        stdin.write('\u001B[B');
+      });
+      await waitUntilReady();
+      await act(async () => {
+        stdin.write('\r');
+      });
+      await waitUntilReady();
+
+      await waitFor(() => {
+        expect(mockSetModel).toHaveBeenCalledWith(
+          'google/gemma-4-26b-a4b',
+          true,
+        );
+        expect(mockRefreshAuth).toHaveBeenCalledWith(
+          AuthType.USE_LOCAL_LM_STUDIO,
+          undefined,
+          'http://localhost:1234',
+        );
+      });
+      unmount();
+    });
+
     it('shows all 6 Gemma 4 aliases when falling back to static list', async () => {
       mockDiscoverBackends.mockResolvedValue({ backends: [] });
 

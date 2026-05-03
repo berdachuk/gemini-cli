@@ -42,9 +42,101 @@ import { theme } from '../semantic-colors.js';
 import { DescriptiveRadioButtonSelect } from './shared/DescriptiveRadioButtonSelect.js';
 import { ConfigContext } from '../contexts/ConfigContext.js';
 import { useSettings } from '../contexts/SettingsContext.js';
+import { SettingScope } from '../../config/settings.js';
 
 interface ModelDialogProps {
   onClose: () => void;
+}
+
+const LOCAL_MODEL_CHOICE_PREFIX = 'local-choice::';
+
+function encodeLocalModelChoice(authType: AuthType, modelId: string): string {
+  return `${LOCAL_MODEL_CHOICE_PREFIX}${authType}::${encodeURIComponent(modelId)}`;
+}
+
+function decodeLocalModelChoice(
+  value: string,
+): { authType: AuthType; modelId: string } | null {
+  if (!value.startsWith(LOCAL_MODEL_CHOICE_PREFIX)) {
+    return null;
+  }
+
+  const payload = value.slice(LOCAL_MODEL_CHOICE_PREFIX.length);
+  const separatorIndex = payload.indexOf('::');
+  if (separatorIndex === -1) {
+    return null;
+  }
+
+  const authType = payload.slice(0, separatorIndex);
+  const modelId = decodeURIComponent(payload.slice(separatorIndex + 2));
+  if (!authType || !modelId || !isDecodedLocalAuthType(authType)) {
+    return null;
+  }
+
+  return {
+    authType,
+    modelId,
+  };
+}
+
+function isDecodedLocalAuthType(value: string): value is AuthType {
+  return (
+    value === AuthType.USE_LOCAL_OLLAMA ||
+    value === AuthType.USE_LOCAL_LM_STUDIO ||
+    value === AuthType.USE_LOCAL_LLAMA_CPP ||
+    value === AuthType.USE_LOCAL_VLLM ||
+    value === AuthType.USE_LOCAL_SGLANG
+  );
+}
+
+function getConfiguredDiscoveryBaseUrls(
+  settings: ReturnType<typeof useSettings>,
+): Partial<
+  Record<'ollama' | 'lm-studio' | 'llama-cpp' | 'vllm' | 'sglang', string>
+> {
+  const providers = settings.merged.localModel?.providers;
+  return {
+    ollama: providers?.ollama?.baseUrl,
+    'lm-studio': providers?.['lm-studio']?.baseUrl,
+    'llama-cpp': providers?.['llama-cpp']?.baseUrl,
+    vllm: providers?.vllm?.baseUrl,
+    sglang: providers?.sglang?.baseUrl,
+  };
+}
+
+function getConfiguredBaseUrlForAuthType(
+  settings: ReturnType<typeof useSettings>,
+  authType: AuthType,
+): string | undefined {
+  switch (authType) {
+    case AuthType.USE_LOCAL_OLLAMA:
+      return (
+        settings.merged.localModel?.providers?.ollama?.baseUrl ??
+        settings.merged.localModel?.baseUrl
+      );
+    case AuthType.USE_LOCAL_LM_STUDIO:
+      return (
+        settings.merged.localModel?.providers?.['lm-studio']?.baseUrl ??
+        settings.merged.localModel?.baseUrl
+      );
+    case AuthType.USE_LOCAL_LLAMA_CPP:
+      return (
+        settings.merged.localModel?.providers?.['llama-cpp']?.baseUrl ??
+        settings.merged.localModel?.baseUrl
+      );
+    case AuthType.USE_LOCAL_VLLM:
+      return (
+        settings.merged.localModel?.providers?.vllm?.baseUrl ??
+        settings.merged.localModel?.baseUrl
+      );
+    case AuthType.USE_LOCAL_SGLANG:
+      return (
+        settings.merged.localModel?.providers?.sglang?.baseUrl ??
+        settings.merged.localModel?.baseUrl
+      );
+    default:
+      return settings.merged.localModel?.baseUrl;
+  }
 }
 
 export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
@@ -82,10 +174,14 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
     if (!isLocalModelMode || discoveryReady) return;
     setDiscoveryReady(true);
     const service = new LocalModelDiscoveryService();
-    void service.discoverBackends().then((result) => {
-      setDiscoveredBackends(result.backends);
-    });
-  }, [isLocalModelMode, discoveryReady]);
+    void service
+      .discoverBackends({
+        baseUrls: getConfiguredDiscoveryBaseUrls(settings),
+      })
+      .then((result) => {
+        setDiscoveredBackends(result.backends);
+      });
+  }, [isLocalModelMode, discoveryReady, settings]);
 
   // Determine the Preferred Model (read once when the dialog opens).
   const preferredModel = config?.getModel() || DEFAULT_GEMINI_MODEL_AUTO;
@@ -350,10 +446,18 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
         const label = BACKEND_DISPLAY[backend.backend] || backend.backend;
         for (const model of backend.gemma4Models) {
           const displayName = getDisplayString(model.id, config ?? undefined);
+          const metadata = backend.gemma4Metadata.find(
+            (meta) => meta.id === model.id,
+          );
+          const details = metadata
+            ? `${metadata.quantization}, ${Math.round(
+                metadata.contextLength / 1024,
+              )}K ctx`
+            : 'running';
           options.push({
-            value: model.id,
+            value: encodeLocalModelChoice(backend.authType, model.id),
             title: displayName,
-            description: `Provider: ${label} ● running`,
+            description: `Provider: ${label} ● ${details}`,
             key: `${backend.backend}:${model.id}`,
           });
         }
@@ -471,16 +575,31 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
         return;
       }
 
+      const localChoice = decodeLocalModelChoice(model);
+      const targetModel = localChoice?.modelId ?? model;
+      const targetAuthType = localChoice?.authType ?? selectedAuthType;
+
       if (config) {
-        config.setModel(model, persistMode ? false : true);
-        if (selectedAuthType && isLocalBackendAuthType(selectedAuthType)) {
-          await config.refreshAuth(
-            selectedAuthType,
-            undefined,
-            settings.merged.localModel?.baseUrl,
+        config.setModel(targetModel, persistMode ? false : true);
+        if (
+          persistMode &&
+          targetAuthType &&
+          isLocalBackendAuthType(targetAuthType)
+        ) {
+          settings.setValue(
+            SettingScope.User,
+            'security.auth.selectedType',
+            targetAuthType,
           );
         }
-        const event = new ModelSlashCommandEvent(model);
+        if (targetAuthType && isLocalBackendAuthType(targetAuthType)) {
+          await config.refreshAuth(
+            targetAuthType,
+            undefined,
+            getConfiguredBaseUrlForAuthType(settings, targetAuthType),
+          );
+        }
+        const event = new ModelSlashCommandEvent(targetModel);
         logModelSlashCommand(config, event);
       }
       onClose();

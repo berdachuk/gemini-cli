@@ -2286,3 +2286,104 @@ To reduce merge risk, land Phase 2 in this order:
 - All new test files exist and pass
 - Lint and typecheck pass clean
 - No regression in cloud model behavior (verified by existing tests)
+
+---
+
+## 17. Phase 4 — Runtime Compatibility Hardening (2026-05-03)
+
+### 17.1 Overview
+
+Phase 4 focuses on the remaining runtime correctness gaps between “feature
+implemented” and “feature reliably usable with real local OpenAI-compatible
+backends.” The work is centered on schema translation, concrete-model Gemma 4
+behavior after alias resolution, and accurate provider routing in the CLI UI.
+
+### 17.2 Gap Inventory
+
+| #   | Gap                                                         | Severity | Verified Current State                                                                                                                                                              |
+| --- | ----------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | OpenAI-compatible tool schema translation is incomplete     | High     | `geminiToOpenAiTranslator.ts` forwards `fd.parameters`, but repo tools are primarily declared via `parametersJsonSchema`, which can produce invalid tool payloads on local adapters |
+| 2   | Local Gemma runtime checks are alias-only                   | High     | `geminiChat.ts` enables thinking/tool-filter behavior only for `gemma4-*` aliases, but `refreshAuth()` resolves those aliases to concrete backend IDs like `gemma4:26b`             |
+| 3   | ModelDialog discovery is not provider-routable              | High     | The dialog lists models from multiple providers, but selection refreshes auth using the previously active backend instead of the backend attached to the discovered model           |
+| 4   | ModelDialog discovery ignores configured provider base URLs | Medium   | Startup auto-discovery uses configured provider URLs, while dialog discovery probes defaults only                                                                                   |
+| 5   | Discovery metadata is fetched but not surfaced to the user  | Medium   | `gemma4Metadata` is available, but the dialog description remains a generic provider status                                                                                         |
+
+### 17.3 Implementation Plan
+
+#### Milestone P4.1 — OpenAI Schema Normalization
+
+**Goal:** All local OpenAI-compatible backends receive valid function schemas.
+
+**Primary files:**
+
+- `packages/core/src/core/geminiToOpenAiTranslator.ts`
+- `packages/core/src/core/geminiToOpenAiTranslator.test.ts`
+
+**Tasks:**
+
+1. Prefer `parametersJsonSchema` over `parameters` when translating tools
+2. Normalize schema shape for OpenAI-compatible backends
+3. Add regression tests for repo-native tool schemas and Gemini-style schemas
+
+**Exit criteria:**
+
+- Tool-enabled local requests no longer fail with schema validation 400s
+- Subagent execution and session summary generation succeed against local
+  backends
+
+#### Milestone P4.2 — Concrete Gemma 4 Runtime Detection
+
+**Goal:** Gemma 4 runtime features remain enabled after alias resolution.
+
+**Primary files:**
+
+- `packages/core/src/config/models.ts`
+- `packages/core/src/core/geminiChat.ts`
+- `packages/core/src/core/geminiChat.test.ts`
+
+**Tasks:**
+
+1. Add a shared Gemma 4 family detector that recognizes both aliases and
+   concrete backend IDs
+2. Gate thinking injection and tool filtering on family detection, not
+   alias-only checks
+3. Add regression coverage for resolved local model IDs such as `gemma4:26b` and
+   `google/gemma-4-26b-a4b`
+
+**Exit criteria:**
+
+- `<|think|>` injection, history cleanup, and tool filtering remain active for
+  resolved local Gemma 4 models
+
+#### Milestone P4.3 — Provider-Accurate Model Selection
+
+**Goal:** Multi-backend discovery routes requests through the provider the user
+selected.
+
+**Primary files:**
+
+- `packages/cli/src/ui/components/ModelDialog.tsx`
+- `packages/cli/src/ui/components/ModelDialog.test.tsx`
+
+**Tasks:**
+
+1. Bind discovered model entries to their originating auth type
+2. Refresh auth using the selected provider instead of the previously active
+   provider
+3. Reuse configured provider base URLs during dialog discovery
+4. Surface discovered metadata in entry descriptions
+
+**Exit criteria:**
+
+- Selecting an LM Studio-discovered model routes through LM Studio
+- Selecting an Ollama-discovered model routes through Ollama
+- Discovery output reflects configured provider endpoints and useful metadata
+
+### 17.4 Definition of Done
+
+- Local OpenAI-compatible backends accept translated tool schemas without 400
+  errors
+- Subagents and session summary generation work with local backends
+- Resolved local Gemma 4 models still receive thinking/tool-filter behavior
+- Multi-backend ModelDialog selection routes through the selected provider
+- Targeted tests cover the new runtime compatibility fixes
