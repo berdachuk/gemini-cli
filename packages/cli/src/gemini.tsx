@@ -293,6 +293,7 @@ export async function autoSelectDiscoveredLocalBackend(
 
   const discovery = await discoveryService.discoverBackends({
     baseUrls: getConfiguredDiscoveryBaseUrls(settings),
+    timeoutMs: settings.merged.localModel?.discoveryTimeoutMs ?? undefined,
   });
 
   if (!discovery.preferredBackend) {

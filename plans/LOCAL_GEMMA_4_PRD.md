@@ -2396,3 +2396,22 @@ selected.
 - Resolved local Gemma 4 models still receive thinking/tool-filter behavior
 - Multi-backend ModelDialog selection routes through the selected provider
 - Targeted tests cover the new runtime compatibility fixes
+
+---
+
+## 18. Phase 6 — Bugfixes & Documentation Cleanup (2026-05-03)
+
+### 18.1 Overview
+
+Phase 6 fixes the remaining runtime bugs, documentation gaps, and hardening
+issues identified in the Phase 5 audit. Four bugs and two doc gaps addressed.
+
+### 18.2 Verified Implementation Status
+
+| #   | Severity | Gap                                                                                                                      | File                                                    | Status                                                                                                                 |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 1   | CRITICAL | `stripThoughtBlocksFromHistory()` no-op audit: `AgentChatHistory.map()` mutates in place and notifies listeners — no bug | `geminiChat.ts:840-861`                                 | **FALSE POSITIVE** — `AgentChatHistory.map()` already assigns result and emits `SYNC_FULL` event. No fix needed.       |
+| 2   | MEDIUM   | Missing FunctionGemma/toolFiltering docs                                                                                 | `docs/cli/local-gemma-4.md`                             | FIXED — new FunctionGemma section with config table                                                                    |
+| 3   | MEDIUM   | No mention of LiteRT-LM vs OpenAI distinction                                                                            | `docs/cli/local-gemma-4.md`                             | FIXED — note at top of doc                                                                                             |
+| 4   | LOW      | `embedContent()` returns empty stub                                                                                      | `geminiToOpenAiContentGenerator.ts:85-91`               | FIXED — implemented via `POST /v1/embeddings` with graceful fallback                                                   |
+| 5   | LOW      | Discovery timeout hardcoded at 1500ms                                                                                    | `localModelDiscoveryService.ts:21`, `settingsSchema.ts` | FIXED — added `localModel.discoveryTimeoutMs` setting (default 1500), wired through `gemini.tsx` and `ModelDialog.tsx` |

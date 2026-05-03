@@ -177,6 +177,7 @@ export function ModelDialog({ onClose }: ModelDialogProps): React.JSX.Element {
     void service
       .discoverBackends({
         baseUrls: getConfiguredDiscoveryBaseUrls(settings),
+        timeoutMs: settings.merged.localModel?.discoveryTimeoutMs ?? undefined,
       })
       .then((result) => {
         setDiscoveredBackends(result.backends);

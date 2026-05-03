@@ -3,6 +3,11 @@
 Run Gemma 4 models locally via popular inference backends, without Google API
 keys or internet access.
 
+> **Note:** This feature is for **Gemma 4 via OpenAI-compatible backends**
+> (Ollama, LM Studio, Llama.cpp, vLLM, SGLang). The CLI also ships separate
+> `gemini gemma setup/start/stop/status` commands for **Gemma 3 via LiteRT-LM**
+> — those are a different feature with their own model and binary management.
+
 ## Supported Backends
 
 | Backend       | Default URL                 | CLI Name    | Auth Type         |
@@ -227,3 +232,59 @@ workflows.
 
 Q4_K_M is the default for all models. Q8_0 is recommended for code tasks (higher
 precision for syntax).
+
+## FunctionGemma Tool Filtering
+
+FunctionGemma is a lightweight 270M-parameter model (301MB at Q4_K_M) that
+pre-filters tool declarations to reduce context usage. When enabled, it runs
+before each turn and selects only the tools relevant to the current query,
+saving ~3,000 tokens per turn on constrained models.
+
+### Configuration
+
+Add to `~/.gemini/settings.json` under `localModel`:
+
+```json
+{
+  "localModel": {
+    "backend": "ollama",
+    "toolFiltering": {
+      "enabled": true,
+      "model": "functiongemma:270m",
+      "maxContextMessages": 3,
+      "fallbackBehavior": "all-tools",
+      "cacheResults": true,
+      "cacheTtl": 30000
+    }
+  }
+}
+```
+
+| Setting                            | Type                                         | Default                | Description                                        |
+| ---------------------------------- | -------------------------------------------- | ---------------------- | -------------------------------------------------- |
+| `toolFiltering.enabled`            | boolean                                      | `false`                | Enable FunctionGemma-based tool filtering          |
+| `toolFiltering.model`              | string                                       | `"functiongemma:270m"` | Ollama model tag for the filtering model           |
+| `toolFiltering.maxContextMessages` | number                                       | `3`                    | Max conversation messages sent for context         |
+| `toolFiltering.fallbackBehavior`   | `"all-tools"` / `"no-tools"` / `"core-only"` | `"all-tools"`          | Behavior when FunctionGemma fails                  |
+| `toolFiltering.cacheResults`       | boolean                                      | `true`                 | Cache tool relevance decisions for similar queries |
+| `toolFiltering.cacheTtl`           | number                                       | `30000`                | Cache time-to-live in milliseconds (30s)           |
+
+### Limitations
+
+- **Ollama-only**: FunctionGemma filtering requires the Ollama backend
+- **Text-only**: Cannot evaluate image/audio relevance — falls back to
+  `all-tools` for multimodal conversations
+- **Latency**: Adds ~200-500ms per turn (mitigated by caching)
+- **VRAM**: Requires ~301MB additional VRAM alongside the main model
+
+### Disabling
+
+Tool filtering is **disabled by default**. To ensure it stays off:
+
+```json
+{
+  "localModel": {
+    "toolFiltering": { "enabled": false }
+  }
+}
+```

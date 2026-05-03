@@ -24,6 +24,7 @@ import {
   type OpenAiStreamChunk,
 } from './geminiToOpenAiTranslator.js';
 import { debugLogger } from '../utils/debugLogger.js';
+import { toContents } from '../code_assist/converter.js';
 
 export class GeminiToOpenAiContentGenerator implements ContentGenerator {
   constructor(
@@ -83,11 +84,63 @@ export class GeminiToOpenAiContentGenerator implements ContentGenerator {
   }
 
   async embedContent(
-    _request: EmbedContentParameters,
+    request: EmbedContentParameters,
   ): Promise<EmbedContentResponse> {
-    return {
-      embeddings: [],
-    } as EmbedContentResponse;
+    try {
+      const base = this.baseUrl.replace(/\/v1\/?$/, '');
+      const url = `${base}/v1/embeddings`;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...this.customHeaders,
+      };
+      if (this.apiKey) {
+        headers['Authorization'] = `Bearer ${this.apiKey}`;
+      }
+
+      const contents = toContents(request.contents);
+
+      const body: Record<string, unknown> = {
+        model: request.model,
+        input: contents.map(
+          (c) =>
+            c.parts?.map((p) => ('text' in p ? p.text : '')).join(' ') ?? '',
+        ),
+      };
+
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        return { embeddings: [] } as EmbedContentResponse;
+      }
+
+      const json: unknown = await resp.json();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      const data = json as Record<string, unknown>;
+      const embeddingsData = data['data'];
+      if (!Array.isArray(embeddingsData)) {
+        return { embeddings: [] } as EmbedContentResponse;
+      }
+
+      return {
+        embeddings: embeddingsData.map((d: unknown) => {
+          if (typeof d !== 'object' || d === null) {
+            return { values: [] };
+          }
+          const entry = d as { embedding?: unknown };
+          const embedding = entry.embedding;
+          return {
+            values: Array.isArray(embedding) ? embedding : [],
+          };
+        }),
+      } as EmbedContentResponse;
+    } catch (e) {
+      debugLogger.warn('embedContent via OpenAI endpoint failed:', e);
+      return { embeddings: [] } as EmbedContentResponse;
+    }
   }
 
   private getCompletionsUrl(): string {

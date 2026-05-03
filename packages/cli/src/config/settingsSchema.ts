@@ -1251,6 +1251,16 @@ const SETTINGS_SCHEMA = {
           },
         },
       },
+      discoveryTimeoutMs: {
+        type: 'number',
+        label: 'Discovery Timeout (ms)',
+        category: 'Model',
+        requiresRestart: true,
+        default: 1500,
+        description:
+          'Timeout in milliseconds for probing each local backend during startup discovery.',
+        showInDialog: false,
+      },
       modelMapping: {
         type: 'object',
         label: 'Local Model Mapping',
