@@ -26,7 +26,8 @@ import { FakeContentGenerator } from './fakeContentGenerator.js';
 import { parseCustomHeaders } from '../utils/customHeaderUtils.js';
 import { determineSurface } from '../utils/surface.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
-import { getVersion, resolveModel } from '../../index.js';
+import { getVersion } from '../utils/version.js';
+import { resolveModel } from '../config/models.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
 
 /**

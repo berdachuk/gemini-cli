@@ -214,6 +214,141 @@ describe('validateNonInterActiveAuth', () => {
     expect(debugLoggerErrorSpy).not.toHaveBeenCalled();
   });
 
+  it('accepts all five local backend auth types without error', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const localAuthTypes = [
+      AuthType.USE_LOCAL_OLLAMA,
+      AuthType.USE_LOCAL_LM_STUDIO,
+      AuthType.USE_LOCAL_LLAMA_CPP,
+      AuthType.USE_LOCAL_VLLM,
+      AuthType.USE_LOCAL_SGLANG,
+    ];
+
+    for (const authType of localAuthTypes) {
+      const nonInteractiveConfig = createLocalMockConfig({});
+      await validateNonInteractiveAuth(
+        authType,
+        true,
+        nonInteractiveConfig,
+        mockSettings,
+      );
+      expect(processExitSpy).not.toHaveBeenCalled();
+    }
+    expect(processExitSpy).not.toHaveBeenCalled();
+    expect(debugLoggerErrorSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it('detects local backend from env var and passes with healthy backend', async () => {
+    process.env['GEMINI_LOCAL_BACKEND'] = 'ollama';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    const nonInteractiveConfig = createLocalMockConfig({});
+
+    await validateNonInteractiveAuth(
+      undefined,
+      undefined,
+      nonInteractiveConfig,
+      mockSettings,
+    );
+
+    expect(processExitSpy).not.toHaveBeenCalled();
+    expect(debugLoggerErrorSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/v1/models'),
+      expect.objectContaining({
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      }),
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it('exits when local backend is not running (health check fails)', async () => {
+    process.env['GEMINI_LOCAL_BACKEND'] = 'ollama';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    const nonInteractiveConfig = createLocalMockConfig({
+      getOutputFormat: vi.fn().mockReturnValue(OutputFormat.TEXT),
+    });
+
+    try {
+      await validateNonInteractiveAuth(
+        undefined,
+        undefined,
+        nonInteractiveConfig,
+        mockSettings,
+      );
+      expect.fail('Should have exited');
+    } catch (e) {
+      expect((e as Error).message).toContain(
+        `process.exit(${ExitCodes.FATAL_AUTHENTICATION_ERROR}) called`,
+      );
+    }
+
+    expect(debugLoggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('ollama is not running at'),
+    );
+    expect(processExitSpy).toHaveBeenCalledWith(
+      ExitCodes.FATAL_AUTHENTICATION_ERROR,
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it('exits when local backend returns non-200 status', async () => {
+    process.env['GEMINI_LOCAL_BACKEND'] = 'ollama';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+    const nonInteractiveConfig = createLocalMockConfig({
+      getOutputFormat: vi.fn().mockReturnValue(OutputFormat.TEXT),
+    });
+
+    try {
+      await validateNonInteractiveAuth(
+        undefined,
+        undefined,
+        nonInteractiveConfig,
+        mockSettings,
+      );
+      expect.fail('Should have exited');
+    } catch (e) {
+      expect((e as Error).message).toContain(
+        `process.exit(${ExitCodes.FATAL_AUTHENTICATION_ERROR}) called`,
+      );
+    }
+
+    expect(debugLoggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('ollama is not running at'),
+    );
+    expect(processExitSpy).toHaveBeenCalledWith(
+      ExitCodes.FATAL_AUTHENTICATION_ERROR,
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it('detects OLLAMA_HOST env var as USE_LOCAL_OLLAMA', async () => {
+    process.env['OLLAMA_HOST'] = 'http://localhost:11434';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    const nonInteractiveConfig = createLocalMockConfig({});
+
+    await validateNonInteractiveAuth(
+      undefined,
+      undefined,
+      nonInteractiveConfig,
+      mockSettings,
+    );
+
+    expect(processExitSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
   it('uses USE_VERTEX_AI if GOOGLE_GENAI_USE_VERTEXAI is true (with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION)', async () => {
     process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
     process.env['GOOGLE_CLOUD_PROJECT'] = 'test-project';

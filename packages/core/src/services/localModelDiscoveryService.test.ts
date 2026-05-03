@@ -31,6 +31,7 @@ describe('LocalModelDiscoveryService', () => {
       filterGemma4Models: vi
         .fn()
         .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn(),
     } as unknown as LocalModelService;
 
     const service = new LocalModelDiscoveryService(localModelService);
@@ -57,6 +58,7 @@ describe('LocalModelDiscoveryService', () => {
         .mockImplementation((models: Array<{ id: string }>) =>
           models.filter((model) => model.id.includes('gemma4')),
         ),
+      fetch: vi.fn(),
     } as unknown as LocalModelService;
 
     const service = new LocalModelDiscoveryService(localModelService);
@@ -76,6 +78,7 @@ describe('LocalModelDiscoveryService', () => {
       filterGemma4Models: vi
         .fn()
         .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn(),
     } as unknown as LocalModelService;
 
     const service = new LocalModelDiscoveryService(localModelService);
@@ -101,6 +104,7 @@ describe('LocalModelDiscoveryService', () => {
       filterGemma4Models: vi
         .fn()
         .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn(),
     } as unknown as LocalModelService;
 
     const service = new LocalModelDiscoveryService(localModelService);
@@ -112,5 +116,136 @@ describe('LocalModelDiscoveryService', () => {
     expect(result.preferredBackend?.authType).toBe(
       AuthType.USE_LOCAL_LM_STUDIO,
     );
+  });
+
+  it('fetches Ollama metadata via /api/show and populates gemma4Metadata', async () => {
+    const localModelService = {
+      discoverModels: vi.fn().mockResolvedValue([{ id: 'gemma4:31b' }]),
+      filterGemma4Models: vi
+        .fn()
+        .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            model_info: { totalParams: '30.7B' },
+            details: { quantization_level: 'Q4_K_M' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    } as unknown as LocalModelService;
+
+    const service = new LocalModelDiscoveryService(localModelService);
+    const result = await service.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_OLLAMA],
+    });
+
+    expect(result.backends).toHaveLength(1);
+    expect(result.backends[0].gemma4Metadata).toHaveLength(1);
+    expect(result.backends[0].gemma4Metadata[0].paramSize).toBe('30.7B');
+    expect(result.backends[0].gemma4Metadata[0].quantization).toBe('Q4_K_M');
+    expect(localModelService.fetch).toHaveBeenCalledWith(
+      'http://localhost:11434/api/show',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({ name: 'gemma4:31b' }),
+      }),
+    );
+  });
+
+  it('falls back to defaults when Ollama /api/show fails', async () => {
+    const localModelService = {
+      discoverModels: vi.fn().mockResolvedValue([{ id: 'gemma4:26b' }]),
+      filterGemma4Models: vi
+        .fn()
+        .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn().mockRejectedValue(new Error('connection refused')),
+    } as unknown as LocalModelService;
+
+    const service = new LocalModelDiscoveryService(localModelService);
+    const result = await service.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_OLLAMA],
+    });
+
+    expect(result.backends).toHaveLength(1);
+    expect(result.backends[0].gemma4Metadata[0].paramSize).toBe('25.2B');
+    expect(result.backends[0].gemma4Metadata[0].quantization).toBe('Q4_K_M');
+  });
+
+  it('non-Ollama backends skip /api/show and use defaults', async () => {
+    const localModelService = {
+      discoverModels: vi.fn().mockResolvedValue([{ id: 'gemma-4-31b-it' }]),
+      filterGemma4Models: vi
+        .fn()
+        .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn(),
+    } as unknown as LocalModelService;
+
+    const service = new LocalModelDiscoveryService(localModelService);
+    const result = await service.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_LM_STUDIO],
+    });
+
+    expect(result.backends).toHaveLength(1);
+    expect(result.backends[0].gemma4Metadata[0].paramSize).toBe('30.7B');
+    expect(localModelService.fetch).not.toHaveBeenCalled();
+  });
+
+  it('tuneBackendModels produces correct tuning settings', async () => {
+    const localModelService = {
+      discoverModels: vi.fn().mockResolvedValue([{ id: 'gemma4:31b' }]),
+      filterGemma4Models: vi
+        .fn()
+        .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            model_info: { totalParams: '30.7B' },
+            details: { quantization_level: 'Q4_K_M' },
+          }),
+          { status: 200 },
+        ),
+      ),
+    } as unknown as LocalModelService;
+
+    const service = new LocalModelDiscoveryService(localModelService);
+    const result = await service.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_OLLAMA],
+    });
+
+    const tunings = await service.tuneBackendModels(result.backends[0]);
+    const tuning = tunings.get('gemma4:31b');
+    expect(tuning).toBeDefined();
+    expect(tuning).toMatchObject({
+      enableThinking: true,
+      thinkingMode: 'native-token',
+      profile: 'large',
+      batchTools: true,
+      prefetchContext: false,
+    });
+  });
+
+  it('chooses preferred backend with more Gemma 4 models', async () => {
+    const localModelService = {
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: 'gemma4:26b' }, { id: 'gemma4:31b' }])
+        .mockResolvedValueOnce([{ id: 'gemma4:31b' }]),
+      filterGemma4Models: vi
+        .fn()
+        .mockImplementation((models: Array<{ id: string }>) => models),
+      fetch: vi.fn(),
+    } as unknown as LocalModelService;
+
+    const service = new LocalModelDiscoveryService(localModelService);
+    const result = await service.discoverBackends({
+      authTypes: [AuthType.USE_LOCAL_OLLAMA, AuthType.USE_LOCAL_LM_STUDIO],
+    });
+
+    expect(result.preferredBackend?.authType).toBe(AuthType.USE_LOCAL_OLLAMA);
+    expect(result.preferredBackend?.gemma4Models).toHaveLength(2);
   });
 });

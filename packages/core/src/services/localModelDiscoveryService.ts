@@ -18,17 +18,22 @@ import {
   tuneModelFromMetadata,
 } from './localModelMetadata.js';
 
-import { AuthType } from '../core/contentGenerator.js';
-
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 1500;
 
-export const LOCAL_BACKEND_DISCOVERY_ORDER: LocalBackendAuthType[] = [
-  AuthType.USE_LOCAL_OLLAMA,
-  AuthType.USE_LOCAL_LM_STUDIO,
-  AuthType.USE_LOCAL_LLAMA_CPP,
-  AuthType.USE_LOCAL_VLLM,
-  AuthType.USE_LOCAL_SGLANG,
-];
+function getLocalBackendDiscoveryOrder(): LocalBackendAuthType[] {
+  return [
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    'local-ollama' as LocalBackendAuthType,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    'local-lm-studio' as LocalBackendAuthType,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    'local-llama-cpp' as LocalBackendAuthType,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    'local-vllm' as LocalBackendAuthType,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    'local-sglang' as LocalBackendAuthType,
+  ];
+}
 
 export interface DiscoveredLocalBackend {
   authType: LocalBackendAuthType;
@@ -56,7 +61,7 @@ export class LocalModelDiscoveryService {
   async discoverBackends(
     options: DiscoverLocalBackendsOptions = {},
   ): Promise<LocalBackendDiscoveryResult> {
-    const authTypes = options.authTypes ?? LOCAL_BACKEND_DISCOVERY_ORDER;
+    const authTypes = options.authTypes ?? getLocalBackendDiscoveryOrder();
     const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
 
     const results = await Promise.allSettled(
@@ -232,7 +237,7 @@ function choosePreferredBackend(
   }
 
   const orderIndex = new Map(
-    LOCAL_BACKEND_DISCOVERY_ORDER.map((authType, index) => [authType, index]),
+    getLocalBackendDiscoveryOrder().map((authType, index) => [authType, index]),
   );
 
   return [...backends].sort((left, right) => {

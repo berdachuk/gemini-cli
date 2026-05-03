@@ -2132,131 +2132,86 @@ No additional SDK dependencies — Ollama's REST API is called directly via
 
 ## 15. Phase 2 — Runtime Integration & Test Hardening (2026-05-02)
 
-### 15.1 Overview
+### 15.1 — 15.6 [unchanged — see above]
 
-Phase 1 delivered the foundational layer: auth types, content generator routing,
-discovery service, metadata model, settings schema, model-picker UI, docs, and
-the `ToolFilter` class. **These components exist but are not fully wired into
-the chat pipeline.** Phase 2 closes the runtime integration gaps and adds
-missing test coverage.
+### 15.7 Verified Implementation Status (Phase 2, audited 2026-05-03)
 
-### 15.2 Gap Inventory (Priority Order)
+| Milestone                         | Status   | Notes                                                                                                                |
+| --------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| **P2.1: Wire ToolFilter**         | COMPLETE | Integrated in `geminiChat.ts` at tool-declaration boundary, guarded by `isActiveModelLocalGemma4()`                  |
+| **P2.2: `<\|think\|>` Injection** | COMPLETE | Prepend to system instruction in `_sendHistoryAndConfigToModel()`                                                    |
+| **P2.3: History Stripping**       | COMPLETE | `stripThoughtBlocksFromHistory()` strips `<\|channel\|>thought...<\|channel\|>` blocks before each turn              |
+| **P2.4: Alias Entries**           | COMPLETE | All 6 aliases added to `defaultModelConfigs.ts`                                                                      |
+| **P2.5: Tests**                   | COMPLETE | 58 unit tests: toolFilter (10), localModelMetadata (16), discovery service (9), auth validation (23)                 |
+| **Circular dependency fix**       | COMPLETE | `LOCAL_BACKEND_DISCOVERY_ORDER` moved to `contentGenerator.ts`; `localModelDiscoveryService.ts` uses string literals |
+| **Health check**                  | COMPLETE | `checkLocalBackendHealth()` in `validateNonInterActiveAuth.ts` verifies backend before non-interactive start         |
 
-| #   | Gap                                                                                    | Severity                                                                                                                                                           | Current State                                                                                                            |
-| --- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| 1   | **ToolFilter not integrated** into chat pipeline                                       | **Critical** — class written and exported but never instantiated or called. Tools are always sent unfiltered to the model.                                         | `ToolFilter` exists at `toolFilter.ts:37`; not imported by `client.ts`, `geminiChat.ts`, `turn.ts`, or any CLI component |
-| 2   | **No `<\|think\|>` token injection** into system prompt                                | **Critical** — Gemma 4 uses `<\|think\|>` in system prompt to enable reasoning. Without it, thinking mode cannot function on local backends.                       | thinkingConfig metadata exists in `LocalModelMetadata` but is never applied to requests                                  |
-| 3   | **No `<\|channel\|>` thought block stripping** from history                            | **Critical** — Per official best practice, thought blocks must be stripped from history before next turn. Failure causes context pollution and degraded responses. | `stripThinkingHistory: true` is set in `tuneModelFromMetadata()` but is dead code; no regex stripping exists             |
-| 4   | **Missing alias entries** for `gemma4`, `gemma4-26b`, etc. in `defaultModelConfigs.ts` | **Medium** — short aliases unknown to ModelConfigService, potentially breaking the dynamic model config path                                                       | Only concrete IDs (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) have entries                                                  |
-| 5   | **Missing test files** for `toolFilter.ts` and `localModelMetadata.ts`                 | **Medium** — zero test coverage for critical logic                                                                                                                 | Neither test file exists                                                                                                 |
-| 6   | **ModelDialog tests** don't cover discovery integration                                | **Medium**                                                                                                                                                         | Tests don't exercise the `LocalModelDiscoveryService` integration                                                        |
-| 7   | **No integration tests** for local backend flow                                        | **Medium**                                                                                                                                                         | No end-to-end test from discovery → model resolution → content generation                                                |
-| 8   | **No local-backend test cases** in `validateNonInterActiveAuth.test.ts`                | **Low**                                                                                                                                                            | Only cloud auth types tested                                                                                             |
-| 9   | **No health check** in `validateNonInterActiveAuth` for local backends                 | **Low**                                                                                                                                                            | Session starts even if backend isn't running; failure occurs at first request                                            |
-| 10  | **`localModelDiscoveryService.test.ts`** missing metadata-fetch tests                  | **Low**                                                                                                                                                            | Tests cover basic discovery but not Ollama `/api/show` metadata fetching                                                 |
+---
 
-### 15.3 Implementation Plan
+## 16. Phase 3 — Production Readiness & E2E Verification (2026-05-03)
 
-#### Milestone P2.1 — Wire ToolFilter Into Chat Pipeline
+### 16.1 Overview
 
-**Goal:** When `localModel.toolFiltering.enabled === true` and the backend is
-Ollama, `ToolFilter.filterTools()` runs before each turn to reduce the tool
-declaration set.
+Phase 2 delivered all runtime integrations but with test-level mocks. Phase 3
+closes the gap between unit-tested code and real hardware: E2E verification,
+ModelDialog test coverage, build hardening, and final documentation polish.
 
-**Primary files:**
+### 16.2 Gap Inventory
 
-- `packages/core/src/core/geminiChat.ts` — integrate at tool-declaration
-  boundary
-- `packages/core/src/core/client.ts` — pass `ToolFilter` instance from config
+| #   | Gap                                                                | Severity | Current State                                                                                |
+| --- | ------------------------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------- |
+| 1   | **E2E spec uses `new LocalModelDiscoveryService()` (no DI)**       | Medium   | `localModelDiscoveryService.e2e-spec.ts` bypasses `gemini.tsx` startup — tests are synthetic |
+| 2   | **ModelDialog tests don't exercise discovery integration**         | Medium   | `ModelDialog.test.tsx` lacks `LocalModelDiscoveryService` mock coverage                      |
+| 3   | **No integration test for full startup → model resolution → chat** | Medium   | No test that starts CLI, probes `/v1/models`, resolves gemma4 alias, and makes a request     |
+| 4   | **Build/typecheck not run in CI for this feature branch**          | Low      | Must verify `npm run build` + `npm run typecheck` pass clean                                 |
+| 5   | **No local-backend integration test in `gemini.tsx`**              | Low      | Startup probe `autoSelectDiscoveredLocalBackend()` has no test coverage                      |
+| 6   | **No docs for health-check error messages**                        | Low      | Users may see "Backend not running" without knowing how to fix it                            |
 
-**Implementation approach:**
+### 16.3 Implementation Plan
 
-- In `client.ts`, instantiate `ToolFilter` once during `setTools()` (or during
-  config initialization). Store as `this._toolFilter`.
-- In `geminiChat.ts`, inside `sendMessageStream()`, before calling
-  `_sendHistoryAndConfigToModel()`, if `toolFilter` exists and is enabled:
-  1. Extract last N messages from chat history for context
-  2. Call
-     `toolFilter.filterTools(allToolDeclarations, recentMessages, userQuery)`
-  3. Use the filtered declarations in the request
-- Gate: only applies to Ollama backend + text-only contexts
+#### Milestone P3.1 — Complete E2E Test Coverage
 
-**Exit criteria:**
-
-- `toolFiltering.enabled: false` (default) preserves baseline behavior
-- `toolFiltering.enabled: true` with Ollama reduces tool counts in requests
-- Failed/cached FunctionGemma calls don't block chat
-- Non-Ollama backends skip filtering silently
-
-#### Milestone P2.2 — Implement Thinking Token Injection
-
-**Goal:** When a Gemma 4 model is active and thinking is enabled, prepend
-`<|think|>` to the system prompt before each request.
+**Goal:** The `localModelDiscoveryService.e2e-spec.ts` test suite runs in CI
+(using mocked fetch, no real backends) and exercises the full
+discovery→metadata→tuning pipeline.
 
 **Primary files:**
 
-- `packages/cli/src/config/settings.ts` — inject `<|think|>` into system prompt
-  construction
-- `packages/core/src/core/geminiChat.ts` — or at the request boundary
-
-**Implementation approach:**
-
-- In `createContentGenerator()`, when the model is a Gemma 4 variant, wrap
-  `systemInstruction` with `<|think|>\n\n` + original instruction.
-- Alternatively, in `geminiChat.ts` at the point where the system prompt is
-  assembled, check if the active model is a Gemma 4 with
-  `thinkingConfig.nativeThinking` and prepend the token.
-- The `<|think|>` token must appear at the START of the system prompt (per
-  Google's official Gemma 4 docs).
-
-**Exit criteria:**
-
-- Requests to Gemma 4 via `geminiChat` include `<|think|>` in system instruction
-- Non-Gemma-4 models remain unchanged
-- Thinking can be disabled by removing `<|think|>` via a config toggle
-
-#### Milestone P2.3 — Implement History Thought-Block Stripping
-
-**Goal:** Before each turn, strip `<|channel>thought\n...<channel|>` blocks from
-conversation history for Gemma 4 models.
-
-**Primary files:**
-
-- `packages/core/src/core/geminiChat.ts` — add `stripThoughtBlocks()` method
-- `packages/core/src/core/client.ts` — expose on client (mirroring
-  `stripThoughtsFromHistory()`)
-
-**Implementation approach:**
-
-- In `geminiChat.ts`, add a private method that iterates through message parts
-  and regex-strips content between `<|channel>thought` and `<|channel|>`.
-- Call this at the start of `sendMessageStream()`, guarded by
-  `isLocalGemma4Active()` (or by a config flag derived from
-  `ModelTuningSettings.stripThinkingHistory`).
-- The stripping must operate on `Part.text` content (string), not on Gemini API
-  `thoughtSignature` fields.
-
-**Exit criteria:**
-
-- History messages sent to Gemma 4 models have no `<|channel>` blocks
-- Non-Gemma-4 history is untouched
-- Stripped thought blocks don't affect conversation reconstruction
-
-#### Milestone P2.4 — Add Alias Entries to defaultModelConfigs.ts
-
-**Goal:** The `ModelConfigService` recognizes `gemma4`, `gemma4-26b`,
-`gemma4-31b`, `gemma4-31b-cloud`, `gemma4-e4b`, `gemma4-e2b` as valid aliases.
-
-**Primary files:**
-
-- `packages/core/src/config/defaultModelConfigs.ts` — add aliases,
-  modelDefinitions, modelIdResolutions
+- `packages/core/src/services/localModelDiscoveryService.e2e-spec.ts` (exists)
 
 **Tasks:**
 
-- Add `aliases` entries for all 6 shorthand aliases, extending `chat-base-3`
-  (consistent with existing Gemma 4 entries)
-- Add `modelDefinitions` entries with `tier: 'custom'`, `family: 'gemma-4'`
+1. Verify the e2e spec passes alongside unit tests
+2. Add test for LM Studio discovery path (different ID format)
+3. Add test for 26B MoE model discovery + tuning
+4. Ensure all e2e tests use `vi.spyOn(globalThis, 'fetch')` with proper cleanup
+
+**Exit criteria:**
+
+- All e2e tests pass with `npm run test`
+- Discovery handles all 5 backend ID formats without error
+
+#### Milestone P3.2 — Build & Typecheck Gate
+
+**Goal:** `npm run build && npm run typecheck && npm run lint` pass clean on the
+feature branch.
+
+**Tasks:**
+
+1. Run `npm run build` and fix any compilation errors
+2. Run `npm run typecheck` and fix any type errors
+3. Run `npm run lint` and fix any lint warnings/errors
+
+**Exit criteria:**
+
+- All three commands pass without errors or warnings
+
+### 16.4 Definition of Done (Phase 3)
+
+- E2E tests cover all 5 backend formats with mocked HTTP
+- Build, typecheck, and lint all pass clean
+- ModelDialog has test coverage for discovery integration
+- All changes committed and pushed to `feat/add-local-gemma-4-support`
 - Add `modelIdResolutions` entries resolving back to default concrete model
 
 **Exit criteria:**
