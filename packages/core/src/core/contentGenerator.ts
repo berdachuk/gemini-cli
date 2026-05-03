@@ -26,6 +26,7 @@ import { FakeContentGenerator } from './fakeContentGenerator.js';
 import { parseCustomHeaders } from '../utils/customHeaderUtils.js';
 import { determineSurface } from '../utils/surface.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
+import { GeminiToOpenAiContentGenerator } from './geminiToOpenAiContentGenerator.js';
 import { getVersion } from '../utils/version.js';
 import { resolveModel } from '../config/models.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
@@ -509,15 +510,28 @@ export async function createContentGenerator(
         );
       }
       validateBaseUrl(config.baseUrl);
-      const googleGenAI = new GoogleGenAI({
-        apiKey: undefined,
-        vertexai: false,
-        httpOptions: {
-          baseUrl: config.baseUrl,
-          headers,
-        },
-      });
-      return new LoggingContentGenerator(googleGenAI.models, gcConfig);
+
+      if (
+        config.authType === AuthType.USE_LOCAL_VLLM ||
+        config.authType === AuthType.USE_LOCAL_SGLANG
+      ) {
+        const googleGenAI = new GoogleGenAI({
+          apiKey: undefined,
+          vertexai: false,
+          httpOptions: {
+            baseUrl: config.baseUrl,
+            headers,
+          },
+        });
+        return new LoggingContentGenerator(googleGenAI.models, gcConfig);
+      }
+
+      const adapter = new GeminiToOpenAiContentGenerator(
+        config.baseUrl,
+        config.apiKey,
+        { ...headers },
+      );
+      return new LoggingContentGenerator(adapter, gcConfig);
     }
     throw new Error(
       `Error creating contentGenerator: Unsupported authType: ${config.authType}`,
