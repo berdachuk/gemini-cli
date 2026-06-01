@@ -178,3 +178,20 @@ In this example:
 - `metadata.attributes`: (Optional) A record of custom attributes to add to the
   span.
 - `metadata.error`: (Optional) An error object to record if the operation fails.
+
+## Local build
+
+```bash
+# 0) Remove any global install
+npm uninstall -g @google/gemini-cli
+
+# 1) In your monorepo root
+npm install
+npm run build --workspace @google/gemini-cli
+
+# 2) Link local workspace as global
+npm link --workspace @google/gemini-cli
+
+# 3) Verify version comes from your workspace
+gemini --version
+```
