@@ -25,32 +25,19 @@ export const SHADOW_REPO_AUTHOR_NAME = 'Gemini CLI';
 export const SHADOW_REPO_AUTHOR_EMAIL = 'gemini-cli@google.com';
 
 const SHADOW_REPO_UNSAFE_OPTIONS = {
-  allowUnsafeAlias: true,
-  allowUnsafeAskPass: true,
-  allowUnsafeConfigEnvCount: true,
-  allowUnsafeConfigPaths: true,
-  allowUnsafeCredentialHelper: true,
   allowUnsafeCustomBinary: true,
-  allowUnsafeDiffTextConv: true,
-  allowUnsafeEditor: true,
-  allowUnsafeFilter: true,
-  allowUnsafeFsMonitor: true,
   allowUnsafeGitProxy: true,
-  allowUnsafeGpgProgram: true,
-  allowUnsafeMergeDriver: true,
   allowUnsafePack: true,
-  allowUnsafePager: true,
   allowUnsafeProtocolOverride: true,
-  allowUnsafeTemplateDir: true,
-} satisfies NonNullable<SimpleGitOptions['unsafe']> &
-  Record<`allowUnsafe${string}`, boolean>;
+} satisfies Partial<NonNullable<SimpleGitOptions['unsafe']>>;
 
 /**
  * Common configuration for the shadow Git repository used for checkpointing.
  *
- * We enable all "unsafe" options because the shadow repository is an internal,
- * isolated state management tool, and we want to ensure it works reliably
- * regardless of the user's local environment (e.g., PAGER, EDITOR, or SSH settings).
+ * We enable only the minimal set of unsafe options needed for the shadow
+ * repository to function as an internal, isolated state management tool.
+ * The shadow repo runs in a sanitized environment with its own gitconfig,
+ * so we do not need to expose risky options like hooks, editor, pager, etc.
  */
 const SHADOW_REPO_GIT_OPTIONS: Partial<SimpleGitOptions> = {
   unsafe: SHADOW_REPO_UNSAFE_OPTIONS,
