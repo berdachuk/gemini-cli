@@ -113,6 +113,12 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
         model: 'gemini-3.1-flash-lite',
       },
     },
+    'gemini-3.5-flash': {
+      extends: 'chat-base-3',
+      modelConfig: {
+        model: 'gemini-3.5-flash',
+      },
+    },
     'gemma-4-31b-it': {
       extends: 'chat-base-3',
       modelConfig: {
@@ -174,6 +180,12 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       extends: 'base',
       modelConfig: {
         model: 'gemini-3-flash-preview',
+      },
+    },
+    'gemini-3.5-flash-base': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-3.5-flash',
       },
     },
     classifier: {
@@ -383,6 +395,13 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       isVisible: true,
       features: { thinking: false, multimodalToolUse: true },
     },
+    'gemini-3.5-flash': {
+      tier: 'flash',
+      family: 'gemini-3',
+      isPreview: false,
+      isVisible: true,
+      features: { thinking: false, multimodalToolUse: true },
+    },
     'gemini-2.5-pro': {
       tier: 'pro',
       family: 'gemini-2.5',
@@ -554,9 +573,32 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
       default: 'gemini-3-flash-preview',
       contexts: [
         {
-          condition: { hasAccessToPreview: false },
+          condition: { hasAccessToPreview: false, useGemini3_5Flash: true },
+          target: 'gemini-3.5-flash',
+        },
+        {
+          condition: { hasAccessToPreview: false, useGemini3_5Flash: false },
           target: 'gemini-2.5-flash',
         },
+      ],
+    },
+    'gemini-3.5-flash': {
+      default: 'gemini-3.5-flash',
+      contexts: [
+        {
+          condition: { useGemini3_5Flash: false, hasAccessToPreview: false },
+          target: 'gemini-2.5-flash',
+        },
+        {
+          condition: { useGemini3_5Flash: false },
+          target: 'gemini-3-flash-preview',
+        },
+      ],
+    },
+    'gemini-2.5-flash': {
+      default: 'gemini-2.5-flash',
+      contexts: [
+        { condition: { useGemini3_5Flash: true }, target: 'gemini-3.5-flash' },
       ],
     },
     'gemini-3-pro-preview': {
@@ -607,6 +649,7 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
     flash: {
       default: 'gemini-3-flash-preview',
       contexts: [
+        { condition: { useGemini3_5Flash: true }, target: 'gemini-3.5-flash' },
         {
           condition: { hasAccessToPreview: false },
           target: 'gemini-2.5-flash',
@@ -638,6 +681,7 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
     flash: {
       default: 'gemini-3-flash-preview',
       contexts: [
+        { condition: { useGemini3_5Flash: true }, target: 'gemini-3.5-flash' },
         {
           condition: { hasAccessToPreview: false },
           target: 'gemini-2.5-flash',
