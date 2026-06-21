@@ -28,7 +28,8 @@ const SHADOW_REPO_UNSAFE_OPTIONS = {
   allowUnsafeCustomBinary: true,
   allowUnsafePack: true,
   allowUnsafeProtocolOverride: true,
-} satisfies Partial<NonNullable<SimpleGitOptions['unsafe']>>;
+} satisfies NonNullable<SimpleGitOptions['unsafe']> &
+  Record<`allowUnsafe${string}`, boolean>;
 
 /**
  * Common configuration for the shadow Git repository used for checkpointing.
