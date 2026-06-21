@@ -24,7 +24,6 @@ import { CCPA_AI_MODEL_MAPPINGS } from '../config/models.js';
 import { loadApiKey } from './apiKeyCredentialStorage.js';
 import { FakeContentGenerator } from './fakeContentGenerator.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
-import { GeminiToOpenAiContentGenerator } from './geminiToOpenAiContentGenerator.js';
 import { resetVersionCache } from '../utils/version.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
 
@@ -230,13 +229,51 @@ describe('createContentGenerator', () => {
     );
   });
 
-  it('should create a local backend content generator using the OpenAI adapter', async () => {
+  it('should create a local GoogleGenAI content generator for gemini-protocol backends', async () => {
     const mockConfig = {
       getModel: vi.fn().mockReturnValue('gemma4:26b'),
       getProxy: vi.fn().mockReturnValue(undefined),
       getUsageStatisticsEnabled: () => false,
       getClientName: vi.fn().mockReturnValue(undefined),
     } as unknown as Config;
+
+    const mockGenerator = {
+      models: {},
+    } as unknown as GoogleGenAI;
+    vi.mocked(GoogleGenAI).mockImplementation(() => mockGenerator as never);
+
+    const generator = await createContentGenerator(
+      {
+        authType: AuthType.USE_LOCAL_VLLM,
+        baseUrl: 'http://localhost:8000/v1',
+      },
+      mockConfig,
+    );
+
+    expect(GoogleGenAI).toHaveBeenCalledWith({
+      apiKey: undefined,
+      vertexai: false,
+      httpOptions: expect.objectContaining({
+        baseUrl: 'http://localhost:8000/v1',
+        headers: expect.objectContaining({
+          'User-Agent': expect.any(String),
+        }),
+      }),
+    });
+    expect(generator).toEqual(
+      new LoggingContentGenerator(mockGenerator.models, mockConfig),
+    );
+  });
+
+  it('should create a GeminiToOpenAi adapter content generator for openai-protocol backends', async () => {
+    const mockConfig = {
+      getModel: vi.fn().mockReturnValue('gemma4:26b'),
+      getProxy: vi.fn().mockReturnValue(undefined),
+      getUsageStatisticsEnabled: () => false,
+      getClientName: vi.fn().mockReturnValue(undefined),
+    } as unknown as Config;
+
+    vi.mocked(GoogleGenAI).mockImplementation(() => ({}) as never);
 
     const generator = await createContentGenerator(
       {
@@ -246,13 +283,8 @@ describe('createContentGenerator', () => {
       mockConfig,
     );
 
+    expect(GoogleGenAI).not.toHaveBeenCalled();
     expect(generator).toBeInstanceOf(LoggingContentGenerator);
-    const inner = (
-      generator as unknown as {
-        wrapped: unknown;
-      }
-    ).wrapped;
-    expect(inner).toBeInstanceOf(GeminiToOpenAiContentGenerator);
   });
 
   it('should use standard User-Agent for a2a-server running outside VS Code', async () => {

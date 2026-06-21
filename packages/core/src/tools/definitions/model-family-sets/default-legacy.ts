@@ -261,7 +261,7 @@ export const DEFAULT_LEGACY_SET: CoreToolSet = {
   glob: {
     name: GLOB_TOOL_NAME,
     description:
-      'Efficiently finds files matching specific glob patterns (e.g., `src/**/*.ts`, `**/*.md`), returning absolute paths sorted by modification time (newest first). Ideal for quickly locating files based on their name or path structure, especially in large codebases.',
+      'Efficiently finds files matching specific glob patterns (e.g., `src/**/*.ts`, `**/*.md`), returning absolute paths sorted by modification time (newest first). Returns at most 100 results; use a more specific pattern or directory to narrow large result sets. Ideal for quickly locating files based on their name or path structure, especially in large codebases.',
     parametersJsonSchema: {
       type: 'object',
       properties: {

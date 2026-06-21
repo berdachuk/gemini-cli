@@ -26,7 +26,6 @@ export const SHADOW_REPO_AUTHOR_EMAIL = 'gemini-cli@google.com';
 
 const SHADOW_REPO_UNSAFE_OPTIONS = {
   allowUnsafeCustomBinary: true,
-  allowUnsafeGitProxy: true,
   allowUnsafePack: true,
   allowUnsafeProtocolOverride: true,
 } satisfies NonNullable<SimpleGitOptions['unsafe']> &
