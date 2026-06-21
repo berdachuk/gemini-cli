@@ -53,6 +53,12 @@ const mockConfig = {
 describe('getAuthTypeFromEnv', () => {
   beforeEach(() => {
     vi.stubEnv('GEMINI_API_KEY', '');
+    vi.stubEnv('GEMINI_LOCAL_BACKEND', '');
+    vi.stubEnv('OLLAMA_HOST', '');
+    vi.stubEnv('LM_STUDIO_API_BASE', '');
+    vi.stubEnv('LLAMA_CPP_SERVER_BASE', '');
+    vi.stubEnv('VLLM_API_BASE', '');
+    vi.stubEnv('SGLANG_API_BASE', '');
   });
 
   afterEach(() => {
@@ -223,7 +229,7 @@ describe('createContentGenerator', () => {
     );
   });
 
-  it('should create a local GoogleGenAI content generator', async () => {
+  it('should create a local GoogleGenAI content generator for gemini-protocol backends', async () => {
     const mockConfig = {
       getModel: vi.fn().mockReturnValue('gemma4:26b'),
       getProxy: vi.fn().mockReturnValue(undefined),
@@ -238,8 +244,8 @@ describe('createContentGenerator', () => {
 
     const generator = await createContentGenerator(
       {
-        authType: AuthType.USE_LOCAL_OLLAMA,
-        baseUrl: 'http://localhost:11434/v1',
+        authType: AuthType.USE_LOCAL_VLLM,
+        baseUrl: 'http://localhost:8000/v1',
       },
       mockConfig,
     );
@@ -248,7 +254,7 @@ describe('createContentGenerator', () => {
       apiKey: undefined,
       vertexai: false,
       httpOptions: expect.objectContaining({
-        baseUrl: 'http://localhost:11434/v1',
+        baseUrl: 'http://localhost:8000/v1',
         headers: expect.objectContaining({
           'User-Agent': expect.any(String),
         }),
@@ -257,6 +263,28 @@ describe('createContentGenerator', () => {
     expect(generator).toEqual(
       new LoggingContentGenerator(mockGenerator.models, mockConfig),
     );
+  });
+
+  it('should create a GeminiToOpenAi adapter content generator for openai-protocol backends', async () => {
+    const mockConfig = {
+      getModel: vi.fn().mockReturnValue('gemma4:26b'),
+      getProxy: vi.fn().mockReturnValue(undefined),
+      getUsageStatisticsEnabled: () => false,
+      getClientName: vi.fn().mockReturnValue(undefined),
+    } as unknown as Config;
+
+    vi.mocked(GoogleGenAI).mockImplementation(() => ({}) as never);
+
+    const generator = await createContentGenerator(
+      {
+        authType: AuthType.USE_LOCAL_OLLAMA,
+        baseUrl: 'http://localhost:11434/v1',
+      },
+      mockConfig,
+    );
+
+    expect(GoogleGenAI).not.toHaveBeenCalled();
+    expect(generator).toBeInstanceOf(LoggingContentGenerator);
   });
 
   it('should use standard User-Agent for a2a-server running outside VS Code', async () => {
