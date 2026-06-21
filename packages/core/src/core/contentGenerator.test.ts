@@ -24,6 +24,7 @@ import { CCPA_AI_MODEL_MAPPINGS } from '../config/models.js';
 import { loadApiKey } from './apiKeyCredentialStorage.js';
 import { FakeContentGenerator } from './fakeContentGenerator.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
+import { GeminiToOpenAiContentGenerator } from './geminiToOpenAiContentGenerator.js';
 import { resetVersionCache } from '../utils/version.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
 
@@ -53,6 +54,12 @@ const mockConfig = {
 describe('getAuthTypeFromEnv', () => {
   beforeEach(() => {
     vi.stubEnv('GEMINI_API_KEY', '');
+    vi.stubEnv('GEMINI_LOCAL_BACKEND', '');
+    vi.stubEnv('OLLAMA_HOST', '');
+    vi.stubEnv('LM_STUDIO_API_BASE', '');
+    vi.stubEnv('LLAMA_CPP_SERVER_BASE', '');
+    vi.stubEnv('VLLM_API_BASE', '');
+    vi.stubEnv('SGLANG_API_BASE', '');
   });
 
   afterEach(() => {
@@ -223,18 +230,13 @@ describe('createContentGenerator', () => {
     );
   });
 
-  it('should create a local GoogleGenAI content generator', async () => {
+  it('should create a local backend content generator using the OpenAI adapter', async () => {
     const mockConfig = {
       getModel: vi.fn().mockReturnValue('gemma4:26b'),
       getProxy: vi.fn().mockReturnValue(undefined),
       getUsageStatisticsEnabled: () => false,
       getClientName: vi.fn().mockReturnValue(undefined),
     } as unknown as Config;
-
-    const mockGenerator = {
-      models: {},
-    } as unknown as GoogleGenAI;
-    vi.mocked(GoogleGenAI).mockImplementation(() => mockGenerator as never);
 
     const generator = await createContentGenerator(
       {
@@ -244,19 +246,13 @@ describe('createContentGenerator', () => {
       mockConfig,
     );
 
-    expect(GoogleGenAI).toHaveBeenCalledWith({
-      apiKey: undefined,
-      vertexai: false,
-      httpOptions: expect.objectContaining({
-        baseUrl: 'http://localhost:11434/v1',
-        headers: expect.objectContaining({
-          'User-Agent': expect.any(String),
-        }),
-      }),
-    });
-    expect(generator).toEqual(
-      new LoggingContentGenerator(mockGenerator.models, mockConfig),
-    );
+    expect(generator).toBeInstanceOf(LoggingContentGenerator);
+    const inner = (
+      generator as unknown as {
+        wrapped: unknown;
+      }
+    ).wrapped;
+    expect(inner).toBeInstanceOf(GeminiToOpenAiContentGenerator);
   });
 
   it('should use standard User-Agent for a2a-server running outside VS Code', async () => {

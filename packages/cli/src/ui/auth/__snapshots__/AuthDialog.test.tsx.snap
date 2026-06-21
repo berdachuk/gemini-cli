@@ -7,10 +7,10 @@ exports[`AuthDialog > Snapshots > renders correctly with auth error 1`] = `
 │                                                                                                  │
 │  How would you like to connect Gemini CLI for this project?                                      │
 │                                                                                                  │
-│  (selected)  (not selected)(not      (not        (not selecte(not selected(not      (not         │
-│  Sign in withUse Gemini APIselected) selected)   Local LM    Local        selected) selected)    │
-│  Google      Key           Vertex AI Local OllamaStudio      Llama.cpp    Local vLLMLocal SGLang │
-│                                                                                                  │
+│  (selected) (not        (not     (not      (not selected)(not selected)(not selecte(not          │
+│  Sign in witselected) Usselected)selected) Local LM StudiLocal Llama.cpLocal vLLM  selected)     │
+│  Google     Gemini API  Vertex AILocal     (draft)       (draft)       (draft)     Local SGLang  │
+│             Key                  Ollama                                            (draft)       │
 │                                                                                                  │
 │  Something went wrong                                                                            │
 │                                                                                                  │
@@ -31,10 +31,10 @@ exports[`AuthDialog > Snapshots > renders correctly with default props 1`] = `
 │                                                                                                  │
 │  How would you like to connect Gemini CLI for this project?                                      │
 │                                                                                                  │
-│  (selected)  (not selected)(not      (not        (not selecte(not selected(not      (not         │
-│  Sign in withUse Gemini APIselected) selected)   Local LM    Local        selected) selected)    │
-│  Google      Key           Vertex AI Local OllamaStudio      Llama.cpp    Local vLLMLocal SGLang │
-│                                                                                                  │
+│  (selected) (not        (not     (not      (not selected)(not selected)(not selecte(not          │
+│  Sign in witselected) Usselected)selected) Local LM StudiLocal Llama.cpLocal vLLM  selected)     │
+│  Google     Gemini API  Vertex AILocal     (draft)       (draft)       (draft)     Local SGLang  │
+│             Key                  Ollama                                            (draft)       │
 │                                                                                                  │
 │  (Use Enter to select)                                                                           │
 │                                                                                                  │

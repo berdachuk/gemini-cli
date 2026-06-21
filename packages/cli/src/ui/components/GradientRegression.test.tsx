@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { renderWithProviders } from '../../test-utils/render.js';
+import { waitFor } from '../../test-utils/async.js';
 import * as SessionContext from '../contexts/SessionContext.js';
 import { type SessionStatsState } from '../contexts/SessionContext.js';
 import { Banner } from './Banner.js';
@@ -41,6 +42,19 @@ vi.mock('../contexts/SessionContext.js', async (importOriginal) => {
   return {
     ...actual,
     useSessionStats: vi.fn(),
+  };
+});
+
+// Mock the local model discovery service so ModelDialog's async effects do not
+// trigger unmocked network calls (and the resulting act() warnings).
+vi.mock('@google/gemini-cli-core', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@google/gemini-cli-core')>();
+  return {
+    ...actual,
+    LocalModelDiscoveryService: class {
+      discoverBackends = vi.fn().mockResolvedValue({ backends: [] });
+    },
   };
 });
 
@@ -87,9 +101,19 @@ describe('Gradient Crash Regression Tests', () => {
       <ModelDialog onClose={async () => {}} />,
       {
         width: 120,
+        config: {
+          getModel: () => 'gemini-2.5-pro',
+          getProModelNoAccess: () => Promise.resolve(false),
+          getProModelNoAccessSync: () => false,
+          getHasAccessToPreviewModel: () => false,
+          getGemini31LaunchedSync: () => false,
+          getSessionId: () => 'test-session',
+        } as never,
       },
     );
-    expect(lastFrame()).toBeDefined();
+    await waitFor(() => {
+      expect(lastFrame()).toBeDefined();
+    });
     unmount();
   });
 

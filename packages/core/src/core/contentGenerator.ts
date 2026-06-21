@@ -30,10 +30,9 @@ import { determineSurface } from '../utils/surface.js';
 import { RecordingContentGenerator } from './recordingContentGenerator.js';
 import { GeminiToOpenAiContentGenerator } from './geminiToOpenAiContentGenerator.js';
 import { getVersion } from '../utils/version.js';
-import { resolveModel } from '../config/models.js';
+import { resolveModel, CCPA_AI_MODEL_MAPPINGS } from '../config/models.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
 import { ModelMappingContentGenerator } from './modelMappingContentGenerator.js';
-import { CCPA_AI_MODEL_MAPPINGS } from '../config/models.js';
 
 /**
  * Interface abstracting the core functionalities for generating content and counting tokens.
