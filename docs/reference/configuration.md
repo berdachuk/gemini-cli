@@ -608,6 +608,12 @@ and examples): **[Local Gemma 4 user guide](../cli/local-gemma-4.md)**.
           "model": "gemini-3.1-flash-lite"
         }
       },
+      "gemini-3.5-flash": {
+        "extends": "chat-base-3",
+        "modelConfig": {
+          "model": "gemini-3.5-flash"
+        }
+      },
       "gemma-4-31b-it": {
         "extends": "chat-base-3",
         "modelConfig": {
@@ -630,6 +636,12 @@ and examples): **[Local Gemma 4 user guide](../cli/local-gemma-4.md)**.
         "extends": "base",
         "modelConfig": {
           "model": "gemini-3-flash-preview"
+        }
+      },
+      "gemini-3.5-flash-base": {
+        "extends": "base",
+        "modelConfig": {
+          "model": "gemini-3.5-flash"
         }
       },
       "classifier": {
@@ -874,6 +886,16 @@ and examples): **[Local Gemma 4 user guide](../cli/local-gemma-4.md)**.
           "multimodalToolUse": true
         }
       },
+      "gemini-3.5-flash": {
+        "tier": "flash",
+        "family": "gemini-3",
+        "isPreview": false,
+        "isVisible": true,
+        "features": {
+          "thinking": false,
+          "multimodalToolUse": true
+        }
+      },
       "gemini-2.5-pro": {
         "tier": "pro",
         "family": "gemini-2.5",
@@ -1026,9 +1048,46 @@ and examples): **[Local Gemma 4 user guide](../cli/local-gemma-4.md)**.
         "contexts": [
           {
             "condition": {
+              "hasAccessToPreview": false,
+              "useGemini3_5Flash": true
+            },
+            "target": "gemini-3.5-flash"
+          },
+          {
+            "condition": {
+              "hasAccessToPreview": false,
+              "useGemini3_5Flash": false
+            },
+            "target": "gemini-2.5-flash"
+          }
+        ]
+      },
+      "gemini-3.5-flash": {
+        "default": "gemini-3.5-flash",
+        "contexts": [
+          {
+            "condition": {
+              "useGemini3_5Flash": false,
               "hasAccessToPreview": false
             },
             "target": "gemini-2.5-flash"
+          },
+          {
+            "condition": {
+              "useGemini3_5Flash": false
+            },
+            "target": "gemini-3-flash-preview"
+          }
+        ]
+      },
+      "gemini-2.5-flash": {
+        "default": "gemini-2.5-flash",
+        "contexts": [
+          {
+            "condition": {
+              "useGemini3_5Flash": true
+            },
+            "target": "gemini-3.5-flash"
           }
         ]
       },
@@ -1112,6 +1171,12 @@ and examples): **[Local Gemma 4 user guide](../cli/local-gemma-4.md)**.
         "contexts": [
           {
             "condition": {
+              "useGemini3_5Flash": true
+            },
+            "target": "gemini-3.5-flash"
+          },
+          {
+            "condition": {
               "hasAccessToPreview": false
             },
             "target": "gemini-2.5-flash"
@@ -1163,6 +1228,12 @@ and examples): **[Local Gemma 4 user guide](../cli/local-gemma-4.md)**.
       "flash": {
         "default": "gemini-3-flash-preview",
         "contexts": [
+          {
+            "condition": {
+              "useGemini3_5Flash": true
+            },
+            "target": "gemini-3.5-flash"
+          },
           {
             "condition": {
               "hasAccessToPreview": false
