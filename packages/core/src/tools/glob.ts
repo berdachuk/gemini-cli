@@ -28,6 +28,7 @@ import { getErrorMessage } from '../utils/errors.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { GLOB_DEFINITION } from './definitions/coreTools.js';
 import { resolveToolDeclaration } from './definitions/resolver.js';
+import { DEFAULT_MAX_GLOB_RESULTS } from './constants.js';
 
 // Subset of 'Path' interface provided by 'glob' that we can implement for testing
 export interface GlobPath {
@@ -243,10 +244,16 @@ class GlobToolInvocation extends BaseToolInvocation<
       const sortedAbsolutePaths = sortedEntries.map((entry) =>
         entry.fullpath(),
       );
-      const fileListDescription = sortedAbsolutePaths.join('\n');
-      const fileCount = sortedAbsolutePaths.length;
 
-      let resultMessage = `Found ${fileCount} file(s) matching "${this.params.pattern}"`;
+      const totalCount = sortedAbsolutePaths.length;
+      const cappedPaths = sortedAbsolutePaths.slice(
+        0,
+        DEFAULT_MAX_GLOB_RESULTS,
+      );
+      const truncatedCount = totalCount - cappedPaths.length;
+      const fileListDescription = cappedPaths.join('\n');
+
+      let resultMessage = `Found ${totalCount} file(s) matching "${this.params.pattern}"`;
       if (searchDirectories.length === 1) {
         resultMessage += ` within ${searchDirectories[0]}`;
       } else {
@@ -257,9 +264,16 @@ class GlobToolInvocation extends BaseToolInvocation<
       }
       resultMessage += `, sorted by modification time (newest first):\n${fileListDescription}`;
 
+      if (truncatedCount > 0) {
+        resultMessage +=
+          `\n\n... and ${truncatedCount.toLocaleString()} more file(s) not shown ` +
+          `(showing first ${DEFAULT_MAX_GLOB_RESULTS}). ` +
+          `Refine your pattern or use a more specific directory to see additional results.`;
+      }
+
       return {
         llmContent: resultMessage,
-        returnDisplay: `Found ${fileCount} matching file(s)`,
+        returnDisplay: `Found ${totalCount} matching file(s)${truncatedCount > 0 ? ` (showing first ${DEFAULT_MAX_GLOB_RESULTS})` : ''}`,
       };
     } catch (error) {
       debugLogger.warn(`GlobLogic execute Error`, error);
