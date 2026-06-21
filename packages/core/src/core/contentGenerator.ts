@@ -32,6 +32,8 @@ import { GeminiToOpenAiContentGenerator } from './geminiToOpenAiContentGenerator
 import { getVersion } from '../utils/version.js';
 import { resolveModel } from '../config/models.js';
 import type { LlmRole } from '../telemetry/llmRole.js';
+import { ModelMappingContentGenerator } from './modelMappingContentGenerator.js';
+import { CCPA_AI_MODEL_MAPPINGS } from '../config/models.js';
 
 /**
  * Interface abstracting the core functionalities for generating content and counting tokens.
@@ -438,11 +440,14 @@ export async function createContentGenerator(
     ) {
       const httpOptions = { headers: baseHeaders };
       return new LoggingContentGenerator(
-        await createCodeAssistContentGenerator(
-          httpOptions,
-          config.authType,
-          gcConfig,
-          sessionId,
+        new ModelMappingContentGenerator(
+          await createCodeAssistContentGenerator(
+            httpOptions,
+            config.authType,
+            gcConfig,
+            sessionId,
+          ),
+          CCPA_AI_MODEL_MAPPINGS,
         ),
         gcConfig,
       );
@@ -512,7 +517,8 @@ export async function createContentGenerator(
           ? new HttpProxyAgent(proxyUrl)
           : new HttpsProxyAgent(proxyUrl)
         : undefined;
-
+      const useVertex =
+        config.vertexai ?? config.authType === AuthType.USE_VERTEX_AI;
       const googleGenAI = new GoogleGenAI({
         apiKey:
           config.authType === AuthType.GATEWAY
@@ -523,10 +529,17 @@ export async function createContentGenerator(
         vertexai: config.vertexai ?? config.authType === AuthType.USE_VERTEX_AI,
         httpOptions,
         ...(apiVersionEnv && { apiVersion: apiVersionEnv }),
-        ...(proxyAgent && {
+        // Merge proxy and GDCH endpoint into googleAuthOptions if either exists
+        ...((proxyAgent || (useVertex && baseUrl)) && {
           googleAuthOptions: {
             clientOptions: {
-              transporterOptions: { agent: proxyAgent },
+              ...(proxyAgent && {
+                transporterOptions: { agent: proxyAgent },
+              }),
+              ...(useVertex &&
+                baseUrl && {
+                  apiEndpoint: baseUrl,
+                }),
             },
           },
         }),
