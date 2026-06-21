@@ -247,6 +247,103 @@ describe('GlobTool', () => {
       const result = await invocation.execute({ abortSignal });
       expect(result.error?.type).toBe(ToolErrorType.GLOB_EXECUTION_ERROR);
     }, 30000);
+
+    it('should cap results at DEFAULT_MAX_GLOB_RESULTS and report truncation', async () => {
+      const DEFAULT_MAX_GLOB_RESULTS = 100;
+      const filesDir = path.join(tempRootDir, 'many');
+      await fs.mkdir(filesDir);
+      const createdFiles: string[] = [];
+      for (let i = 0; i < 150; i++) {
+        const name = `file-${String(i).padStart(3, '0')}.txt`;
+        const filePath = path.join(filesDir, name);
+        await fs.writeFile(filePath, 'content');
+        createdFiles.push(filePath);
+      }
+
+      const params: GlobToolParams = { pattern: 'many/*.txt' };
+      const invocation = globTool.build(params);
+      const result = await invocation.execute({ abortSignal });
+      const llmContent = partListUnionToString(result.llmContent);
+
+      expect(llmContent).toContain('Found 150 file(s)');
+
+      const shownCount = createdFiles.filter((f) =>
+        llmContent.includes(f),
+      ).length;
+      expect(shownCount).toBe(DEFAULT_MAX_GLOB_RESULTS);
+
+      expect(llmContent).toContain(`... and 50 more file(s) not shown`);
+      expect(llmContent).toContain(`showing first ${DEFAULT_MAX_GLOB_RESULTS}`);
+
+      expect(result.returnDisplay).toBe(
+        `Found 150 matching file(s) (showing first ${DEFAULT_MAX_GLOB_RESULTS})`,
+      );
+    }, 30000);
+
+    it('should not show a truncation message when under the cap', async () => {
+      const filesDir = path.join(tempRootDir, 'few');
+      await fs.mkdir(filesDir);
+      for (let i = 0; i < 50; i++) {
+        await fs.writeFile(
+          path.join(filesDir, `file-${String(i).padStart(2, '0')}.txt`),
+          'content',
+        );
+      }
+
+      const params: GlobToolParams = { pattern: 'few/*.txt' };
+      const invocation = globTool.build(params);
+      const result = await invocation.execute({ abortSignal });
+
+      expect(result.llmContent).toContain('Found 50 file(s)');
+      expect(result.llmContent).not.toContain('more file(s) not shown');
+      expect(result.returnDisplay).toBe('Found 50 matching file(s)');
+    }, 30000);
+
+    it('should report the true total in "Found N" even when capped', async () => {
+      const filesDir = path.join(tempRootDir, 'totals');
+      await fs.mkdir(filesDir);
+      for (let i = 0; i < 120; i++) {
+        await fs.writeFile(
+          path.join(filesDir, `file-${String(i).padStart(3, '0')}.txt`),
+          'content',
+        );
+      }
+
+      const params: GlobToolParams = { pattern: 'totals/*.txt' };
+      const invocation = globTool.build(params);
+      const result = await invocation.execute({ abortSignal });
+
+      expect(result.llmContent).toContain('Found 120 file(s)');
+      expect(result.llmContent).toContain('20 more file(s) not shown');
+    }, 30000);
+
+    it('should return the newest files after capping (sort order preserved)', async () => {
+      const filesDir = path.join(tempRootDir, 'sorted-cap');
+      await fs.mkdir(filesDir);
+      const oldFiles: string[] = [];
+      for (let i = 0; i < 50; i++) {
+        const filePath = path.join(filesDir, `old-${i}.txt`);
+        await fs.writeFile(filePath, 'content');
+        oldFiles.push(filePath);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const newFiles: string[] = [];
+      for (let i = 0; i < 60; i++) {
+        const filePath = path.join(filesDir, `new-${i}.txt`);
+        await fs.writeFile(filePath, 'content');
+        newFiles.push(filePath);
+      }
+
+      const params: GlobToolParams = { pattern: 'sorted-cap/*.txt' };
+      const invocation = globTool.build(params);
+      const result = await invocation.execute({ abortSignal });
+      const llmContent = partListUnionToString(result.llmContent);
+
+      const newShown = newFiles.filter((f) => llmContent.includes(f));
+      const oldShown = oldFiles.filter((f) => llmContent.includes(f));
+      expect(newShown.length).toBe(60);
+      expect(oldShown.length).toBe(40);
+    }, 30000);
   });
 
   describe('validateToolParams', () => {
